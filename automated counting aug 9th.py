@@ -43,7 +43,7 @@ import random
 import time
 import string
 
-“””Lets the user pick a folder that will contain all
+"""Lets the user pick a folder that will contain all
 the videos to be analyzed. The root manipulations are necessary for
 a clean close-out.
 Output: a string that is the full path to the folder the user chooses.
@@ -115,10 +115,9 @@ def find_if_close(cnt1, cnt2, close_dist, far_dist):
 
 """my roi set up. allows you to choose two points which serve as the bottom and
 top of the roi rectangle.
-May still be buggy, further tests needed.
 Is a class because of the necessity of having mouse_click be altered and alter
 the state of set_roi.
-p
+
 Takes in background, the first frame of a video in its constructor. Because
 opencv drawing permanently alters the image, it displays a copy of that, curr_bg.
 When set_roi is called, it is displayed. The user clicking left sets the top of
@@ -267,7 +266,7 @@ class Rotater():
                      (cols, self.pt_one[1] + 10), (0, 255, 0))
 
 
-"""here's the idea: this is given all the information it needs from the video_analyzers
+"""this is given all the information it needs from the video_analyzers
 It stores this info (namely, the frames and the instances of video analyzer), then it
 allows the user to go through all the rotations and roi settings, sending the info
 to the relevant analyzer as soon as its completed. Once it is finished, main will
@@ -309,11 +308,10 @@ class video_analyzer():
     """takes in the filepath of the video it is to analyze, and should_rotate,
     a boolean that indicates whether the video should be rotated for analysis.
     """
-    def __init__(self, filepath, rand_name, should_rotate = False):
+    def __init__(self, filepath, should_rotate = False):
         self.filepath = filepath
         self.should_rotate = should_rotate
         self.video = cv2.VideoCapture(self.filepath)
-        self.rand_name = rand_name
 
         #stop if the video isn't opened
         if not self.video.isOpened():
@@ -328,12 +326,6 @@ class video_analyzer():
         self.rotationM = None
         self.roi = None
 
-        """trying to make something that will write out the video with contours but
-        it's not working great right now"""
-        #videopath = make_file_path(filename, ".avi")
-        #fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-        #out = cv2.VideoWriter(videopath,fourcc, 30.0, firstFrame.shape)
-
     def get_ff(self):
         return self.first_frame
 
@@ -346,8 +338,7 @@ class video_analyzer():
     def analyze(self):
         start_time = time.time()
 
-        #cv2.namedWindow(os.path.split(self.filepath)[1])
-        cv2.namedWindow(self.rand_name)
+        cv2.namedWindow(os.path.split(self.filepath)[1])
         #frame 1 has already been read, so start at 1
         frame_numb = 1
         #stores unified contours, the frames they're from, centroid x + centroid y
@@ -734,19 +725,13 @@ def batch_management(video_type = '.mp4', should_rotate = False):
     setMan = SetUpManager()
 
     for path in video_paths:
-        #to blind me, generate a random string that will display when the video
-        #runs. it's incredibly unlikely this will ever be a duplicate.
-        rand_name = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(10))
-        vidA = video_analyzer(path, rand_name)
+        vidA = video_analyzer(path)
         setMan.add_analyzer(vidA,vidA.get_ff())
-        blinding_dict[rand_name] = path
 
     if should_rotate:
         setMan.do_rotations()
     setMan.set_rois()
     setMan.run_analyses()
-
-    print blinding_dict
 
 
 if __name__ == '__main__':
