@@ -68,7 +68,8 @@ hasn't been being displayed that whole time?
 
 04/05/2017: Trying to fix l/r detection to be less affected by tails and to
 be better at front paws. The midline thing is a good principle, doesn't really
-seem to help but let's leave it there.
+seem to help but let's leave it there. The mideline detection was changed
+to use quartiles instead of minimum and maximum.
 
 4/5/2017
 TODO: fix that apostrophe thing, remove Set_Manager unless it's
@@ -79,6 +80,8 @@ TODO: Add a more info button next to each option that explains what it does.
 stopped cropping rois by ten.
 removed backgrund subtraction in favor of just a negative.
 
+4/03/2018: Redid everything in the contour processing to use pandas instead
+of numpy and lists. Removed now irrelevant writer method.
 
 warning: don't put an apostrophe in any folder you want to run through this.
 It freaks out.
@@ -90,15 +93,13 @@ import cv2
 import numpy as np
 import Tkinter as tk
 import tkFileDialog
-import csv
 import os.path
 import math
 import glob
-import random
 import logging
 import time
-import string
 import pprint
+import pandas as pd
 logging.basicConfig(filename='timing.log',level=logging.INFO)
 logger = logging.getLogger('myapp')
 hdlr = logging.FileHandler('gg.log')
@@ -193,6 +194,7 @@ class startup_menu():
         self.folder = tkFileDialog.askdirectory(title='Choose a Folder')
         self.fold_lab.configure(text = self.folder)
 
+
 """Uses string and path manipulations to create the output filenames for
 the different outputs of the program.
 
@@ -226,7 +228,7 @@ Takes two contours and for every x, y point in 1, compares it to every
 point in 2. If the dist between any two points is less than close_dist the two
 contours are close, return True. If the dist between any two points is greater
 than far_dist, return False, they're automatically not close. This was added
-to improve efficiency, as this becomes quite slow for larger values. 
+to improve efficiency, as this becomes quite slow for larger values.
 EDIT 3.14.2018: changed to be element-wise ops on an array for speed improvements.
 TODO 3.14.2018: Consider just taking the mean of all x and all y to compare
 
@@ -258,7 +260,6 @@ top of the roi rectangle.
 May still be buggy, further tests needed.
 Is a class because of the necessity of having mouse_click be altered and alter
 the state of set_roi.
-p
 Takes in background, the first frame of a video in its constructor. Because
 opencv drawing permanently alters the image, it displays a copy of that, curr_bg.
 When set_roi is called, it is displayed. The user clicking left sets the top of
@@ -462,12 +463,12 @@ class video_analyzer():
         self.denoising_its = denoising_its
         self.do_second_combo = do_second_combo
 
-
         #stop if the video isn't opened
         if not self.video.isOpened():
-            #BAD FORM: do a better warning
-            #and make sure vid filepath exists I guess
-            raise Warning("Unable to open video, check installation of OpenCV")
+            if not os.path.exists(self.filepath):
+                raise Exception(self.filepath + ' does not exist')
+
+            raise Exception("Unable to open video, check installation of OpenCV")
 
         #save the firstframe after converting to greyscale
         eh, ff = self.video.read()
@@ -476,12 +477,6 @@ class video_analyzer():
         #these will store the roi and rotation matrix set by the user.
         self.rotationM = None
         self.roi = None
-
-        """trying to make something that will write out the video with contours but
-        it's not working great right now"""
-        #videopath = make_file_path(filename, ".avi")
-        #fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-        #out = cv2.VideoWriter(videopath,fourcc, 30.0, firstFrame.shape)
 
     def get_ff(self):
         return self.first_frame
@@ -501,6 +496,9 @@ class video_analyzer():
         frame_numb = 1
         #stores unified contours, the frames they're from, centroid x + centroid y
         unified = [[],[],[],[]]
+        #new dataframe to store the single print info
+        hulls_df = pd.DataFrame(columns = ['frame', 'hull', 'contours',
+                                             'X','Y', 'area', 'is_kept'])
         #stores the last frame accessed, so that it can be saved to an image.
         last_frame = None
         #rotate and crop the first frame using opencv
@@ -590,14 +588,32 @@ class video_analyzer():
                         cv2.drawContours(rotated, [hull], 0, (255, 255, 255), 3,
                                          offset=(self.roi[0], self.roi[1]))
 
-                        #if the area is too small or too large, don't save them
-                        if (cv2.contourArea(hull) > 200 and
-                            cv2.contourArea(hull) < 8000):
-                            unified[0].append(hull)
-                            unified[1].append(frame_numb)
-                            M = cv2.moments(hull)
-                            unified[2].append(int(M['m10'] / M['m00']))
-                            unified[3].append(int(M['m01'] / M['m00']))
+                        #if the area is too small or too large, mark for deletion
+                        to_keep = (cv2.contourArea(hull) > 200 and
+                            cv2.contourArea(hull) < 8000)
+                        M = cv2.moments(hull)
+
+                        if M['m00'] > 0:
+                            #add the hull and consituent contours and info to dataframe
+                            #to get pandas to accept it, must be a list not
+                            #a np array
+                            hulls_df = hulls_df.append(pd.DataFrame({
+                                                 'frame': frame_numb,
+                                                 'hull': [hull],
+                                                 'contours':
+                                                     [[contours[i] for i in pos]],
+                                                 'area': M['m00'],
+                                                 'X': int(M['m10'] / M['m00']),
+                                                 'Y': int(M['m01'] / M['m00']),
+                                                 'is_kept': to_keep}),
+                                                 ignore_index=True)
+
+                            #TODO: remove eventually, for now save
+                            if to_keep:
+                                unified[0].append(hull)
+                                unified[1].append(frame_numb)
+                                unified[2].append(int(M['m10'] / M['m00']))
+                                unified[3].append(int(M['m01'] / M['m00']))
 
             time_combine = time.time()
 
@@ -636,7 +652,8 @@ class video_analyzer():
         self.video.release()
         cv2.destroyAllWindows()
         if len(unified[0]) > 1:
-            process_contours(unified, last_frame, self.filepath, self.roi, self.do_second_combo)
+            process_contours(unified, hulls_df, last_frame, self.filepath,
+                             self.roi, self.do_second_combo)
 
 
 """Takes unified contours, finds which are likely to be the same print and
@@ -646,276 +663,50 @@ else uses python lists because that's just something that happened I guess.
 """
 #TODO: make the distance in here set-able
 
-def process_contours(cnts, last_frame, filename, roi, do_second_combo):
+def process_contours(cnts, hulls_df, last_frame, filename, roi, do_second_combo):
     prints = np.array([(0, 0, 0, 0, 0)],
                       dtype = [('centroidx', '>i4'), ('centroidy', '>i4'),
                                ("area",">i4"), ('frame','>i4'),
                                ('print_numb', '>i4')])
 
-    #first we identify areas that are likely to be the same print
+    hulls_df['print_numb'] = np.nan
     print_numb = 1
-    for i in range(0, len(cnts[0])):
-        this_print = None
-        M = cv2.moments(cnts[0][i])
+    #first we identify areas that are likely to be the same print
+    for idx, hull in hulls_df.iterrows():
+        this_print = np.nan
 
-        #check prev cnts to see if they belong to same foot
-        if i!=0:
-            frame_sep = 0
-            j = 0
-            #go back until you find contours at different frames
-            while frame_sep == 0 and j <= i:
-                j+=1
-                frame_sep = cnts[1][i] - cnts[1][i-j]
-
-            #only compare if they're separated by one frame
-            while frame_sep == 1:
-                dist = abs(math.hypot(cnts[2][i] - cnts[2][i-j],
-                                      cnts[3][i] - cnts[3][i-j]))
-                if dist < 20:
-                    #have to have +1 bc of the dumby row!
-                    this_print = prints['print_numb'][i-j+1];
+        #check to see if it was kept
+        if hull.is_kept:
+            #get all hulls that were kept and occured one frame before
+            possible_matches = hulls_df[(hull.frame - hulls_df.frame == 1) &
+                                        hulls_df.is_kept]
+            for m_idx, match in possible_matches.iterrows():
+                dist = abs(math.hypot(hull.X-match.X,
+                                  hull.Y - match.Y))
+                if dist < 20: #if a match is found
+                    this_print = match.print_numb
                     break
-                #check further down until frame_sep is too big
-                j += 1
-                frame_sep = cnts[1][i] - cnts[1][i - j]
 
-        #if it doesn't match previous prints, give it a unique new name
-        if this_print == None:
-            this_print = print_numb
-            print_numb += 1
+            #if it doesn't match previous prints, give it a unique new name
+            if np.isnan(this_print):
+                this_print = print_numb
+                print_numb += 1
 
-        new = np.array([(cnts[2][i], cnts[3][i], M['m00'], cnts[1][i], this_print)],
-                                         dtype = [('centroidx', '>i4'),('centroidy', '>i4'),
-                                                  ("area",">i4"),('frame','>i4'), ('print_numb', '>i4')])
-        prints = np.vstack((prints, new))
+            hulls_df.loc[idx, 'print_numb'] = this_print
 
-    """then we go through and delete prints with only one representative, as they are likely
-    not actually a true print. In the future maybe I can try to combine these with another print
-    as this sometimes results from an intermediate frame where the contour was too small and was
-    deleted.
-    After doing this, draw the prints that have more than 1 representative
-    EVENTUALLY: renumber prints so print numbering isn't so odd.
-    """
-    maximum = int(prints['print_numb'].max())+1
-    for i in xrange(maximum):
-        #generate a random color to draw with
-        color = (random.randint(0, 255), random.randint(0, 255),
-                 random.randint(0, 255))
-        #Get all indices where the print_numb is i.
-        pos = np.where(prints['print_numb'] == i)[0]
+    #count the occurences of each print number
+    counts = hulls_df.print_numb.value_counts()
+    single_occurences = counts.index[counts.values == 1]
+    #mark all numbers that occur only once to be discarded, as they are
+    #almost always not real prints
+    hulls_df.loc[hulls_df.print_numb.isin(single_occurences.values),
+                 'is_kept'] = False
 
-        #if it only occurs once, delete it
-        if pos.size == 1:
-            logger.info("gonna delete print number " + str(i))
-            prints = np.delete(prints, pos[0], axis=0)
+    advanced_processing(last_frame, prints, hulls_df, filename, roi, do_second_combo)
 
-        if pos.size > 1:
-            for z in pos:
-                #draw circle with the same area as the print, centered at the
-                #centroid (plus the offset from the roi)
-                cv2.circle(last_frame,
-                           (prints['centroidx'][z] + roi[0],
-                            prints['centroidy'][z] + roi[1]),
-                           int(math.sqrt(prints['area'][z]/3.14)), color)
-
-    """next, send it off for processing of each print as a whole
-    """
-    write_file(prints, filename)
-    advanced_processing(last_frame, prints, filename, roi, do_second_combo)
-
-"""I'm going back to python lists for this I guess, I should really decide
-on either numpy arrays or python lists but my life and this code is a mess
-python version of which : indices = [i for i, x in enumerate(my_list) if x == "whatever"]
-This takes the full listing of things that were detected as prints and combines
+"""This takes the full listing of things that were detected as prints and combines
 that data into more readable and shortened form - one line per print.
-"""
-def advanced_processing(last_frame, prints, filename, roi, do_second_combo):
-    if prints.size == 0 or prints.size == 1:
-        return
-    #col #0 = print #, col #1 = max area, col#2 = centroid of max area x, col3, centroid of maxA y
-    #col #4 first frame, col #5 last frame, #6 front or back, #7 left or right, 8-frame of max area
-    combo_prints = [[],[],[],[],[],[],[],[],[]]
-    allNumbs = np.unique(prints['print_numb'])
-    #used to track if front paw
-    currMinX = last_frame.shape[1]
-    #get the midline for right vs left based on the furthest separation
-    #maxY = prints['centroidy'].max()
-    #minY = prints['centroidy'].min()
-    #4/5: now take a quartile to get this
-    upper_quart_y = np.percentile(prints['centroidy'],75)
-    lower_quart_y = np.percentile(prints['centroidy'],25)
-    midline = (upper_quart_y - lower_quart_y) / 2 + lower_quart_y
-
-    #go through and fill out the basic info
-    for i in allNumbs:
-        pos = np.where(prints['print_numb'] == i)[0]
-        allOfOnePrint = prints[pos]
-
-        combo_prints[0].append(i)
-        combo_prints[1].append(allOfOnePrint['area'].max())
-
-        indexMaxA = np.argmax(allOfOnePrint['area'], axis=0)
-        combo_prints[2].append(allOfOnePrint['centroidx'][indexMaxA][0])
-        combo_prints[3].append(allOfOnePrint['centroidy'][indexMaxA][0])
-        combo_prints[8].append(allOfOnePrint['frame'][indexMaxA][0][0])
-
-        combo_prints[4].append(allOfOnePrint['frame'].min())
-        combo_prints[5].append(allOfOnePrint['frame'].max())
-
-        #check if its a front paw:
-        if allOfOnePrint['centroidx'].min() < currMinX:
-            currMinX =  allOfOnePrint['centroidx'].min()
-            combo_prints[6].append("f")
-        else:
-            combo_prints[6].append("b")
-
-        #check if right or left
-        if allOfOnePrint['centroidy'].max() > midline:
-            combo_prints[7].append("r")
-        else:
-            combo_prints[7].append("l")
-
-    if do_second_combo:
-    #now we're going to check for double detection of the same pawprint.
-    #!!! eventually maybe this should also re-add contours deleted for having
-    #only a single instance, but that sounds real hard.
-        for i in range(1,len(combo_prints[0])):
-            for j in range(1,3):
-                if i-j < 0:
-                    continue
-                if i >= len(combo_prints[6]):
-                    continue
-                #if the one behind it is the same for front/back and left/right and
-                    #within three frames of each other
-                if (combo_prints[6][i] == combo_prints[6][i-j] and
-                    combo_prints[7][i] == combo_prints[7][i-j] and
-                    (combo_prints[5][i-j]+4 > combo_prints[4][i] or
-                    combo_prints[5][i]+4 > combo_prints[4][i-j])):
-                    #and if they're within 3x the distance value for the initial check
-                    #TODO: make this modular to initial dist check
-                    dist = abs(math.hypot(combo_prints[2][i] - combo_prints[2][i-j],
-                               combo_prints[3][i] - combo_prints[3][i-j]))
-                    if dist < 60:
-                        #combine them to the i row, setting centroid to the maxA
-                        #and the frame of max a
-                        if combo_prints[1][i-j] > combo_prints[1][i]:
-                            combo_prints[1][i] = combo_prints[1][i - j]
-                            combo_prints[2][i] = combo_prints[2][i - j]
-                            combo_prints[3][i] = combo_prints[3][i - j]
-                            combo_prints[8][i] = combo_prints[8][i - j]
-                        combo_prints[4][i] = min(combo_prints[4][i - j],
-                                                 combo_prints[4][i])
-                        combo_prints[5][i] = max(combo_prints[5][i - j],
-                                                 combo_prints[5][i])
-
-                        #delete using list comprehension and pop
-                        [col.pop(i - j) for col in combo_prints]
-
-    #Delete detections that are back paws and are newly detected more than some
-    #dist behind an already detected back print
-    #go backwards because these are usually at the end?
-    #TODO: also make this moduar to initial check
-    #TODO: and make this optional since sometimes it screws up?
-    #TODO: or maybe just make a print out that has the no second combo
-    #and no tail deletion, so that someone can add them back in if wanted
-    #without rerunning! I'm so clever.
-    #making this not happen on first 600 pixels bc f turning
-    for i in range(len(combo_prints[0])-1,0, -1):
-        #don't bother checking fronts
-        if combo_prints[6][i] == "f":
-            continue
-        if combo_prints[2][i] < 600:
-            continue
-
-        for j in range(1, i):
-            #don't compare to fronts
-            if combo_prints[6][i-j] == "f":
-                continue
-
-            #if it comes after the comparison paw and is far behind it
-            if (combo_prints[4][i] > combo_prints[4][i-j] and
-                combo_prints[2][i] > (combo_prints[2][i-j] + 60)):
-                    #delete using list comprehension and pop
-                    [col.pop(i) for col in combo_prints]
-                    break
-            #or if it comes very far after as is still fairly far back
-            if (combo_prints[4][i] > (combo_prints[4][i-j]+7) and
-                combo_prints[2][i] > (combo_prints[2][i-j] + 20)):
-                    #delete using list comprehension and pop
-                    [col.pop(i) for col in combo_prints]
-                    break
-            #or if it's at the same time but way futher back
-            #TODO: this will miss this if the further back one is detected
-            #before the other in the list. Actually for now this is too risky.
-
-    #now redo left right detection with tail deleted
-    upper_quart_y = np.percentile(combo_prints[3],75)
-    lower_quart_y = np.percentile(combo_prints[3],25)
-    midline = (upper_quart_y - lower_quart_y) / 2 + lower_quart_y
-
-    for i in range(0, len(combo_prints[0])):
-        if combo_prints[3][i] > midline:
-            combo_prints[7][i] = "r"
-        else:
-            combo_prints[7][i] = "l"
-
-
-    newpath = make_file_path(filename, '.csv', 'analyzed')
-
-    with open(newpath, 'wb') as f:
-        writer = csv.writer(f)
-        #write a header row for the csv
-        writer.writerow(['print_numb', 'maxA', 'centroidx', 'centroidy',
-                         'firstframe', 'lastframe', 'ForB', 'RorL', 'FrameMaxA'])
-        for i in range(len(combo_prints[0])):
-            #TODO: eventually I should maybe do this in pandas so it isn't so
-            #tediously specific, but for now this will work
-            writer.writerow([combo_prints[0][i], combo_prints[1][i],
-                             combo_prints[2][i][0], combo_prints[3][i][0],
-                             combo_prints[4][i], combo_prints[5][i],
-                             combo_prints[6][i], combo_prints[7][i],
-                             combo_prints[8][i]])
-    print "file written to " + newpath
-
-    for i in range(0, len(combo_prints[0])):
-        col = None
-        if combo_prints[7][i] == 'r':
-            if combo_prints[6][i] == 'f':
-                col = (238, 238, 175)
-            else:
-                col = (255, 191, 0)
-        else:
-            if combo_prints[6][i] == 'f':
-                col = (128, 128, 240)
-            else:
-                col = (0, 69, 255)
-
-
-        cv2.circle(last_frame,
-                   (combo_prints[2][i] + roi[0], combo_prints[3][i] + roi[1]),
-                   int(math.sqrt(combo_prints[1][i] / 3.14)), col,
-                   thickness = 3)
-
-        cv2.putText(last_frame, str(combo_prints[0][i]),
-                    (combo_prints[2][i] + roi[0], combo_prints[3][i] + roi[1]),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), thickness = 2)
-
-    imgpath = make_file_path(filename, '.png')
-    cv2.imwrite(imgpath, last_frame)
-
-
-def write_file(prints, filename):
-    newpath = make_file_path(filename, '.csv')
-
-    with open(newpath, 'wb') as f:
-        writer = csv.writer(f)
-        writer.writerow(['centroidx', 'centroidy', 'area', 'frame', 'print_numb'])
-        for row in prints:
-            writer.writerow([row['centroidx'][0], row['centroidy'][0],
-                             row['area'][0], row['frame'][0], row['print_numb'][0]])
-
-
-"""Notes on labelling which paw a print is :
+Notes on labelling which paw a print is :
 first, group sets of paws: label with a unique id.
 Do this by figuring out which ones are within +/- lets say 30 of each other
 
@@ -925,6 +716,143 @@ if no paw has been as far in the x as this one has, its a front paw
 take the y values, establish the middle of the two extremes (excluding outliers)
 and then divide up right and left based on that
 """
+def advanced_processing(last_frame, prints, hulls_df, filename, roi, do_second_combo):
+    #if there isn't enough data skip
+    if len(hulls_df) < 0:
+        return
+
+    grouped_prints = hulls_df.loc[hulls_df.is_kept].groupby(['print_numb'])
+    combo_prints = pd.DataFrame(grouped_prints.print_numb.mean())
+    combo_prints['first_frame'] = grouped_prints.frame.min().values
+    combo_prints['last_frame'] = grouped_prints.frame.max().values
+    combo_prints['max_area'] = grouped_prints.area.max().values
+
+    #get values based on the hull of maximum area
+    combo_prints['X'] = hulls_df.loc[grouped_prints.area.idxmax(), 'X'].values
+    combo_prints['Y'] = hulls_df.loc[grouped_prints.area.idxmax(), 'Y'].values
+    combo_prints['frame_max_a'] = hulls_df.loc[grouped_prints.area.idxmax(), 'frame'].values
+
+    #use the mideline of paw locations to determine whether paw is L or R
+    upper_quart_y = hulls_df.loc[hulls_df.is_kept].Y.quantile(.75)
+    lower_quart_y = hulls_df.loc[hulls_df.is_kept].Y.quantile(.25)
+    midline = (upper_quart_y - lower_quart_y) / 2 + lower_quart_y
+    combo_prints['is_right'] = grouped_prints.Y.max() > midline
+
+    #used to track if something is a front paw
+    curr_min_x = last_frame.shape[1]
+    #the furthest forward paw so far is a front paw
+    min_xes = grouped_prints.X.min()
+    for idx in combo_prints.print_numb.unique():
+        combo_prints.loc[idx, 'is_hind'] = min_xes[idx] > curr_min_x
+        curr_min_x = min(curr_min_x, min_xes[idx])
+
+    #if two prints of the same classification are close, combine them into one
+    if do_second_combo:
+        for idx, print_ in combo_prints.iterrows():
+            #get all prints that are the same for front/hind and left/right and
+            #within three frames of the current print
+            possible_matches = combo_prints[(combo_prints.is_right == print_.is_right) &
+                                    (combo_prints.is_hind == print_.is_hind) &
+                                    (combo_prints.first_frame -
+                                        print_.last_frame <= 3) &
+                                        (combo_prints.index != idx)]
+            if len(possible_matches) > 0:
+                for m_idx, match in possible_matches.iterrows():
+                    dist = abs(math.hypot(print_.X-match.X, print_.Y-match.Y))
+                    #and if they're within 3x the distance value for the initial check
+                    #TODO: make this modular to initial dist check
+                    if dist < 60:
+                        #keep the higher indexed print to avoid errors
+                        keep_idx = max(m_idx, idx)
+                        del_idx = min(m_idx, idx)
+                        if match.max_area > print_.max_area:
+                            big_idx = m_idx
+                        else:
+                            big_idx = idx
+                        #update that one to have the proper area,X,Y, ect info
+                        cols_trans = ['max_area','X','Y', 'frame_max_a']
+                        combo_prints.loc[keep_idx, cols_trans] = \
+                            combo_prints.loc[big_idx, cols_trans].values
+                        #update frame numbers with the new info
+                        combo_prints.loc[keep_idx, 'first_frame'] = \
+                                    min(match.first_frame, print_.first_frame)
+                        combo_prints.loc[keep_idx, 'last_frame'] = \
+                                    max(match.last_frame, print_.last_frame)
+                        #update all in hulls_df
+                        hulls_df.loc[(hulls_df.print_numb ==
+                                      combo_prints.print_numb[del_idx]),
+                                     'print_numb'] = combo_prints.print_numb[keep_idx]
+                        #and then delete the row
+                        combo_prints.drop(del_idx, inplace=True)
+
+
+    #Delete detections that are back paws and are newly detected more than some
+    #dist behind an already detected back print
+    #TODO: also make this modular to initial check
+    #TODO: add a real option here
+    if True:#do_tail_delete:
+        #for each print, check if it needs to be deleted
+        for idx, print_ in combo_prints.iterrows():
+            #get all hind prints that occur at the before the current
+            #print and are far in front, or occur a long time before and are
+            #slightly in front of the current print
+            possible_matches = combo_prints[(combo_prints.is_hind) &
+                                    (((combo_prints.first_frame <
+                                        print_.first_frame) &
+                                    (print_.X - combo_prints.X > 60)) |
+                                    ((combo_prints.first_frame <
+                                        print_.first_frame - 7) &
+                                    (print_.X - combo_prints.X > 20)))]
+            #if any such prints exist, delete the current print
+            if len(possible_matches) > 0:
+                hulls_df.loc[(hulls_df.print_numb ==
+                                  print_.print_numb),
+                                 'is_kept'] = False
+                combo_prints.drop(idx, inplace=True)
+
+    #now redo left right detection with tail deleted
+    upper_quart_y = combo_prints.Y.quartile(.75)
+    lower_quart_y =  combo_prints.Y.quartile(.25)
+    midline = (upper_quart_y - lower_quart_y) / 2 + lower_quart_y
+    combo_prints['is_right'] = combo_prints.Y > midline
+
+    #write outputs
+    combo_prints = combo_prints.astype('int')
+    combo_prints.to_csv(make_file_path(filename, '.csv', 'combo df'),
+                        index=False, columns = ['print_numb','max_area',
+                                                'X','Y','first_frame',
+                                                'last_frame', 'is_right',
+                                                'is_hind', 'frame_max_a'])
+    path = make_file_path(filename, '.csv', 'hull')
+    #in order to write, make all nans -1
+    write_hulls_df = hulls_df.fillna(-1)
+    write_hulls_df.drop(['contours', 'hull'], axis=1, inplace=True)
+    write_hulls_df.astype('int').to_csv(path, index=False)
+    hulls_df.to_pickle(make_file_path(filename, '.p', 'hull'))
+
+
+    for idx, print_ in combo_prints.iterrows():
+        if print_.is_right:
+            if print_.is_hind:
+                col = (255, 191, 0)
+            else:
+                col = (238, 238, 175)
+        else:
+            if print_.is_hind:
+                col = (0, 69, 255)
+            else:
+                col = (128, 128, 240)
+
+        cv2.circle(last_frame,
+                   (print_.X + roi[0], print_.Y + roi[1]),
+                   int(math.sqrt(print_.max_area / 3.14)), col,
+                   thickness = 3)
+
+        cv2.putText(last_frame, str(print_.print_numb),
+                    (print_.X + roi[0], print_.Y + roi[1]),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), thickness = 2)
+
+    cv2.imwrite(make_file_path(filename, '.png'), last_frame)
 
 """sets up batch videos - gets folder, finds all videos in folder, then initializes
 all the instances of read_video, adding them to a SetUpManager. Then it calls
