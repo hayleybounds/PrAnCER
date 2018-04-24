@@ -83,6 +83,11 @@ removed backgrund subtraction in favor of just a negative.
 4/03/2018: Redid everything in the contour processing to use pandas instead
 of numpy and lists. Removed now irrelevant writer method.
 
+4/24/2018: Added same_paw_dist and do_tail_deletion as alterable options
+in the startup menu. same_paw_dist controls whether prints are considered
+the same paw or are combined. Began factoring code out of advanced_processing
+so that things make more sense and can be tested.
+
 warning: don't put an apostrophe in any folder you want to run through this.
 It freaks out.
 
@@ -141,29 +146,39 @@ class startup_menu():
         tk.Entry(self.root, textvariable = self.dn_it, width = 15).grid(row=3, column=1)
         self.dn_it.set(3)
 
-        tk.Label(self.root, text="File Type:").grid(row=4, sticky=tk.W)
+        tk.Label(self.root, text="Video File Type:").grid(row=4, sticky=tk.W)
         self.file_type = tk.Entry(self.root, width = 15)
         self.file_type.insert(0,".mp4")
         self.file_type.grid(row=4, column=1)
 
+        tk.Label(self.root, text="Same Paw Distance:").grid(row=5, sticky=tk.W)
+        self.same_paw_dist = tk.IntVar()
+        tk.Entry(self.root, width = 15, textvariable = self.same_paw_dist).grid(row=5, column=1)
+        self.same_paw_dist.set(20)
+
         #1 for true 0 for false
         self.rot = tk.BooleanVar()
-        tk.Checkbutton(self.root, text="Rotate Videos", variable=self.rot).grid(row=5, column=0, columnspan=2)
+        tk.Checkbutton(self.root, text="Rotate Videos", variable=self.rot).grid(row=6, column=0, columnspan=2)
 
         self.sec_combo = tk.BooleanVar()
         self.sec_combo.set(1)
         temp = tk.Checkbutton(self.root, text="Do Second Combination", variable=self.sec_combo)
         temp.select()
-        temp.grid(row=6, column=0, columnspan=2)
+        temp.grid(row=7, column=0, columnspan=2)
 
+        self.tail_del = tk.BooleanVar()
+        self.tail_del.set(1)
+        temp = tk.Checkbutton(self.root, text="Do Tail Deletion", variable=self.tail_del)
+        temp.select()
+        temp.grid(row=8, column=0, columnspan=2)
 
         fold_but = tk.Button(self.root, text="Choose Folder:", command = self.get_folder)
         self.fold_lab = tk.Label(self.root, text=self.folder)
         quit_but = tk.Button(self.root, text="Continue", command = self.close)
 
-        fold_but.grid(row=7)
-        self.fold_lab.grid(row=7, column=1)
-        quit_but.grid(row=8, column=0, columnspan=2)
+        fold_but.grid(row=9)
+        self.fold_lab.grid(row=9, column=1)
+        quit_but.grid(row=10, column=0, columnspan=2)
 
         self.root.mainloop()
 
@@ -177,14 +192,20 @@ class startup_menu():
         try:
             self.low_canny.get()
             self.high_canny.get()
+            self.same_paw_dist.get()
             self.dn_it.get()
+            self.dist_set.get()
         except ValueError:
-            raise ValueError("Input to Denoising Iterations, Low Canny and High Canny must be integers")
+            raise ValueError("Input to Denoising Iterations," +
+                " Distance Settings, and Canny settings must be integers")
 
         batch_management(self.folder, self.dist_set.get(), self.low_canny.get(),
                          self.high_canny.get(), self.dn_it.get(),
+                         self.same_paw_dist.get(),
                          video_type=self.file_type.get(),
-                         should_rotate=self.rot.get(), do_second_combo = self.sec_combo.get())
+                         should_rotate=self.rot.get(),
+                         do_second_combo=self.sec_combo.get(),
+                         do_tail_deletion=self.tail_del.get())
 
         self.root.destroy()
         self.root.quit()
@@ -452,16 +473,19 @@ class video_analyzer():
     a boolean that indicates whether the video should be rotated for analysis.
     """
     def __init__(self, filepath, rand_name, close_dist, low_canny, high_canny,
-                 denoising_its, should_rotate, do_second_combo):
+                 denoising_its, same_paw_dist, should_rotate, do_second_combo,
+                 do_tail_deletion):
         self.filepath = filepath
         self.should_rotate = should_rotate
         self.video = cv2.VideoCapture(self.filepath)
         self.rand_name = rand_name
         self.close_dist = close_dist
+        self.same_paw_dist = same_paw_dist
         self.low_canny = low_canny
         self.high_canny = high_canny
         self.denoising_its = denoising_its
         self.do_second_combo = do_second_combo
+        self.do_tail_deletion = do_tail_deletion
 
         #stop if the video isn't opened
         if not self.video.isOpened():
@@ -652,8 +676,10 @@ class video_analyzer():
         self.video.release()
         cv2.destroyAllWindows()
         if len(unified[0]) > 1:
-            process_contours(unified, hulls_df, last_frame, self.filepath,
-                             self.roi, self.do_second_combo)
+            process_contours(unified, hulls_df, self.same_paw_dist,
+                             last_frame, self.filepath,
+                             self.roi, self.do_second_combo,
+                             self.do_tail_deletion)
 
 
 """Takes unified contours, finds which are likely to be the same print and
@@ -661,14 +687,8 @@ labels them with that print number and stores them in the prints numpy
 structured array. Uses numpy rather than python lists even though everything
 else uses python lists because that's just something that happened I guess.
 """
-#TODO: make the distance in here set-able
-
-def process_contours(cnts, hulls_df, last_frame, filename, roi, do_second_combo):
-    prints = np.array([(0, 0, 0, 0, 0)],
-                      dtype = [('centroidx', '>i4'), ('centroidy', '>i4'),
-                               ("area",">i4"), ('frame','>i4'),
-                               ('print_numb', '>i4')])
-
+def process_contours(cnts, hulls_df, same_paw_dist, last_frame, filename, roi,
+                     do_second_combo, do_tail_deletion):
     hulls_df['print_numb'] = np.nan
     print_numb = 1
     #first we identify areas that are likely to be the same print
@@ -683,7 +703,7 @@ def process_contours(cnts, hulls_df, last_frame, filename, roi, do_second_combo)
             for m_idx, match in possible_matches.iterrows():
                 dist = abs(math.hypot(hull.X-match.X,
                                   hull.Y - match.Y))
-                if dist < 20: #if a match is found
+                if dist < same_paw_dist: #if a match is found
                     this_print = match.print_numb
                     break
 
@@ -702,7 +722,8 @@ def process_contours(cnts, hulls_df, last_frame, filename, roi, do_second_combo)
     hulls_df.loc[hulls_df.print_numb.isin(single_occurences.values),
                  'is_kept'] = False
 
-    advanced_processing(last_frame, prints, hulls_df, filename, roi, do_second_combo)
+    advanced_processing(last_frame, hulls_df, same_paw_dist, filename, roi,
+                        do_second_combo, do_tail_deletion)
 
 """This takes the full listing of things that were detected as prints and combines
 that data into more readable and shortened form - one line per print.
@@ -716,9 +737,9 @@ if no paw has been as far in the x as this one has, its a front paw
 take the y values, establish the middle of the two extremes (excluding outliers)
 and then divide up right and left based on that
 """
-def advanced_processing(last_frame, prints, hulls_df, filename, roi, do_second_combo):
-    #if there isn't enough data skip
-    if len(hulls_df) < 0:
+def advanced_processing(last_frame, hulls_df, same_paw_dist, filename, roi,
+                        do_second_combo, do_tail_deletion):
+    if len(hulls_df) < 0: #if there isn't enough data skip
         return
 
     grouped_prints = hulls_df.loc[hulls_df.is_kept].groupby(['print_numb'])
@@ -731,12 +752,7 @@ def advanced_processing(last_frame, prints, hulls_df, filename, roi, do_second_c
     combo_prints['X'] = hulls_df.loc[grouped_prints.area.idxmax(), 'X'].values
     combo_prints['Y'] = hulls_df.loc[grouped_prints.area.idxmax(), 'Y'].values
     combo_prints['frame_max_a'] = hulls_df.loc[grouped_prints.area.idxmax(), 'frame'].values
-
-    #use the mideline of paw locations to determine whether paw is L or R
-    upper_quart_y = hulls_df.loc[hulls_df.is_kept].Y.quantile(.75)
-    lower_quart_y = hulls_df.loc[hulls_df.is_kept].Y.quantile(.25)
-    midline = (upper_quart_y - lower_quart_y) / 2 + lower_quart_y
-    combo_prints['is_right'] = grouped_prints.Y.max() > midline
+    assign_left_right(combo_prints)
 
     #used to track if something is a front paw
     curr_min_x = last_frame.shape[1]
@@ -748,73 +764,11 @@ def advanced_processing(last_frame, prints, hulls_df, filename, roi, do_second_c
 
     #if two prints of the same classification are close, combine them into one
     if do_second_combo:
-        for idx, print_ in combo_prints.iterrows():
-            #get all prints that are the same for front/hind and left/right and
-            #within three frames of the current print
-            possible_matches = combo_prints[(combo_prints.is_right == print_.is_right) &
-                                    (combo_prints.is_hind == print_.is_hind) &
-                                    (combo_prints.first_frame -
-                                        print_.last_frame <= 3) &
-                                        (combo_prints.index != idx)]
-            if len(possible_matches) > 0:
-                for m_idx, match in possible_matches.iterrows():
-                    dist = abs(math.hypot(print_.X-match.X, print_.Y-match.Y))
-                    #and if they're within 3x the distance value for the initial check
-                    #TODO: make this modular to initial dist check
-                    if dist < 60:
-                        #keep the higher indexed print to avoid errors
-                        keep_idx = max(m_idx, idx)
-                        del_idx = min(m_idx, idx)
-                        if match.max_area > print_.max_area:
-                            big_idx = m_idx
-                        else:
-                            big_idx = idx
-                        #update that one to have the proper area,X,Y, ect info
-                        cols_trans = ['max_area','X','Y', 'frame_max_a']
-                        combo_prints.loc[keep_idx, cols_trans] = \
-                            combo_prints.loc[big_idx, cols_trans].values
-                        #update frame numbers with the new info
-                        combo_prints.loc[keep_idx, 'first_frame'] = \
-                                    min(match.first_frame, print_.first_frame)
-                        combo_prints.loc[keep_idx, 'last_frame'] = \
-                                    max(match.last_frame, print_.last_frame)
-                        #update all in hulls_df
-                        hulls_df.loc[(hulls_df.print_numb ==
-                                      combo_prints.print_numb[del_idx]),
-                                     'print_numb'] = combo_prints.print_numb[keep_idx]
-                        #and then delete the row
-                        combo_prints.drop(del_idx, inplace=True)
-
-
-    #Delete detections that are back paws and are newly detected more than some
-    #dist behind an already detected back print
-    #TODO: also make this modular to initial check
-    #TODO: add a real option here
-    if True:#do_tail_delete:
-        #for each print, check if it needs to be deleted
-        for idx, print_ in combo_prints.iterrows():
-            #get all hind prints that occur at the before the current
-            #print and are far in front, or occur a long time before and are
-            #slightly in front of the current print
-            possible_matches = combo_prints[(combo_prints.is_hind) &
-                                    (((combo_prints.first_frame <
-                                        print_.first_frame) &
-                                    (print_.X - combo_prints.X > 60)) |
-                                    ((combo_prints.first_frame <
-                                        print_.first_frame - 7) &
-                                    (print_.X - combo_prints.X > 20)))]
-            #if any such prints exist, delete the current print
-            if len(possible_matches) > 0:
-                hulls_df.loc[(hulls_df.print_numb ==
-                                  print_.print_numb),
-                                 'is_kept'] = False
-                combo_prints.drop(idx, inplace=True)
-
-    #now redo left right detection with tail deleted
-    upper_quart_y = combo_prints.Y.quartile(.75)
-    lower_quart_y =  combo_prints.Y.quartile(.25)
-    midline = (upper_quart_y - lower_quart_y) / 2 + lower_quart_y
-    combo_prints['is_right'] = combo_prints.Y > midline
+        find_matches_and_combine(combo_prints, same_paw_dist, hulls_df=hulls_df)
+    #Delete detections that are probably tails, then redo left/right assignment
+    if do_tail_deletion:
+        delete_tail_detections(combo_prints, same_paw_dist, 7, hulls_df=hulls_df)
+        assign_left_right(combo_prints)
 
     #write outputs
     combo_prints = combo_prints.astype('int')
@@ -824,13 +778,16 @@ def advanced_processing(last_frame, prints, hulls_df, filename, roi, do_second_c
                                                 'last_frame', 'is_right',
                                                 'is_hind', 'frame_max_a'])
     path = make_file_path(filename, '.csv', 'hull')
-    #in order to write, make all nans -1
-    write_hulls_df = hulls_df.fillna(-1)
+    write_hulls_df = hulls_df.fillna(-1) #in order to write, make all nans -1
     write_hulls_df.drop(['contours', 'hull'], axis=1, inplace=True)
     write_hulls_df.astype('int').to_csv(path, index=False)
     hulls_df.to_pickle(make_file_path(filename, '.p', 'hull'))
 
+    draw_final_print_classification(last_frame, filename, roi, combo_prints)
 
+"""Draws the results of advanced processing
+"""
+def draw_final_print_classification(last_frame, filename, roi, combo_prints):
     for idx, print_ in combo_prints.iterrows():
         if print_.is_right:
             if print_.is_hind:
@@ -847,19 +804,110 @@ def advanced_processing(last_frame, prints, hulls_df, filename, roi, do_second_c
                    (print_.X + roi[0], print_.Y + roi[1]),
                    int(math.sqrt(print_.max_area / 3.14)), col,
                    thickness = 3)
-
         cv2.putText(last_frame, str(print_.print_numb),
                     (print_.X + roi[0], print_.Y + roi[1]),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), thickness = 2)
 
     cv2.imwrite(make_file_path(filename, '.png'), last_frame)
 
+"""Uses a the midline between the 75th and 25th percentile Y values to
+assign prints as left or right.
+4/24/18: Added. Now uses only combo prints, not hulls df, and not grouped prints.
+Some slight changes in classification may occur, but overall accuracy
+shouldn't be compromised.
+"""
+def assign_left_right(combo_prints):
+    upper_quart_y = combo_prints.Y.quantile(.75)
+    lower_quart_y =  combo_prints.Y.quantile(.25)
+    midline = (upper_quart_y - lower_quart_y) / 2 + lower_quart_y
+    combo_prints['is_right'] = combo_prints.Y > midline
+
+"""Given combo_prints dataframe and indexes two combine, combines the two.
+Optionally will update a hulls_df if its passed to reflect the changes.
+4/24/18: Added by taking out code from advanced_processing. Altered some
+code to be cleaner but no logic changes.
+TODO: Warn if hulls_df not passed?
+"""
+def combine_prints(combo_prints, idx1, idx2, hulls_df = None):
+    if (combo_prints.loc[idx1].is_right != combo_prints.loc[idx2].is_right or
+        combo_prints.loc[idx1].is_hind != combo_prints.loc[idx2].is_hind):
+            raise ValueError('prints to combine must have same classification')
+
+    #keep the higher indexed print to avoid errors
+    keep_idx = max(idx1, idx2)
+    del_idx = min(idx1, idx2)
+    big_idx = combo_prints.loc[[idx1,idx2]].max_area.idxmax()
+    #update keep_idx row to have the area,X,Y, ect from the max area row
+    cols_trans = ['max_area','X','Y', 'frame_max_a']
+    combo_prints.loc[keep_idx, cols_trans] = \
+        combo_prints.loc[big_idx, cols_trans].values
+    #update frame numbers with the new info
+    combo_prints.loc[keep_idx, 'first_frame'] = \
+               combo_prints.loc[[idx1,idx2]].first_frame.min()
+    combo_prints.loc[keep_idx, 'last_frame'] = \
+               combo_prints.loc[[idx1,idx2]].last_frame.max()
+    if hulls_df is not None: #update all in hulls_df
+        hulls_df.loc[(hulls_df.print_numb ==
+                      combo_prints.print_numb[del_idx]),
+                     'print_numb'] = combo_prints.print_numb[keep_idx]
+    #and then delete the row
+    combo_prints.drop(del_idx, inplace=True)
+
+"""Iterates through all prints and for each print, gets all other prints
+that are possibly repeats -that is, are the same for front/hind and left/right
+and within three frames of the current print. If they are also within
+a specified from the print (right now, 3x the distance of the initial check),
+the two are combined
+"""
+def find_matches_and_combine(combo_prints, same_paw_dist, hulls_df = None):
+    for idx, print_ in combo_prints.iterrows():
+        possible_matches = combo_prints[(combo_prints.is_right == print_.is_right) &
+                                (combo_prints.is_hind == print_.is_hind) &
+                                (combo_prints.first_frame -
+                                    print_.last_frame <= 3) &
+                                    (combo_prints.index != idx)]
+        if len(possible_matches) > 0:
+            for m_idx, match in possible_matches.iterrows():
+                dist = abs(math.hypot(print_.X-match.X, print_.Y-match.Y))
+                #and if they're within 3x the distance value for the initial check
+                if dist < same_paw_dist*3:
+                    combine_prints(combo_prints, m_idx, idx, hulls_df = hulls_df)
+    #for testing, return indexes of possible matches
+    return possible_matches.index.values
+
+"""Delete detections that are back paws and are newly detected more than some
+dist behind an already detected back print
+"""
+def delete_tail_detections(combo_prints, same_paw_dist, long_frame_thresh,
+                           hulls_df = None):
+    #for each print, check if it needs to be deleted
+    for idx, print_ in combo_prints.iterrows():
+        #get all hind prints that occur before the current
+        #print and are far in front, or occur a long time before and are
+        #slightly in front of the current print
+        possible_matches = combo_prints[(combo_prints.is_hind) &
+                                (((combo_prints.first_frame <
+                                    print_.first_frame) &
+                                (print_.X - combo_prints.X > same_paw_dist*3)) |
+                                ((combo_prints.first_frame <
+                                    print_.first_frame - long_frame_thresh) &
+                                (print_.X - combo_prints.X > same_paw_dist)))]
+        #if any such prints exist, delete the current print
+        if len(possible_matches) > 0:
+            if hulls_df is not None:
+                hulls_df.loc[(hulls_df.print_numb == print_.print_numb),
+                                 'is_kept'] = False
+            combo_prints.drop(idx, inplace=True)
+
+
 """sets up batch videos - gets folder, finds all videos in folder, then initializes
 all the instances of read_video, adding them to a SetUpManager. Then it calls
 the appropriate methods to complete set up and begin analysis.
 You can set what extension of video it should look for. Defaults to .mp4 .
 """
-def batch_management(folder, close_dist, low_canny, high_canny, denoising_its, video_type = '.mp4', should_rotate = False, do_second_combo = True):
+def batch_management(folder, close_dist, low_canny, high_canny, denoising_its,
+                     same_paw_dist, video_type = '.mp4', should_rotate = False,
+                     do_second_combo = True, do_tail_deletion = True):
 
     #get list of all files of type video_type in that folder
     video_paths = glob.glob(folder + '/*' + video_type)
@@ -878,7 +926,9 @@ def batch_management(folder, close_dist, low_canny, high_canny, denoising_its, v
         #rand_name = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(10))
         #Instead, just use numbers
         rand_name = str(counter)
-        vidA = video_analyzer(path, rand_name, close_dist, low_canny, high_canny, denoising_its, should_rotate, do_second_combo)
+        vidA = video_analyzer(path, rand_name, close_dist, low_canny,
+                              high_canny, denoising_its, same_paw_dist,
+                              should_rotate, do_second_combo, do_tail_deletion)
         setMan.add_analyzer(vidA,vidA.get_ff())
         blinding_dict[counter] = os.path.split(path)[1]
         counter += 1
