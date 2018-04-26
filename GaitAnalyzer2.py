@@ -58,8 +58,6 @@ I broke it then? Hopefully this hasn't been going wrong the whole time??
 I found it.
 ANOTHER BUG: in write_file, the dumby row has already been deleted, so
 I'm actually deleting real data. Now fixed. Not sure what impact this has.
-TODO: it's also likely numpy has a csv writing function that would work just
-as well.
 
 3/30/2017: Changing quit dist to 200 and removing display of contour-less frames.
 Deleting some unused printlines.
@@ -88,11 +86,12 @@ in the startup menu. same_paw_dist controls whether prints are considered
 the same paw or are combined. Began factoring code out of advanced_processing
 so that things make more sense and can be tested.
 
+4/25/2018: Added a json that saves the settings video was run with.
+Began splitting up methods in video_analyzer to clean things up.
+***Removed upper limit on size
+
 warning: don't put an apostrophe in any folder you want to run through this.
 It freaks out.
-
-
-
 """
 import cv2
 import numpy as np
@@ -105,6 +104,7 @@ import logging
 import time
 import pprint
 import pandas as pd
+import json
 logging.basicConfig(filename='timing.log',level=logging.INFO)
 logger = logging.getLogger('myapp')
 hdlr = logging.FileHandler('gg.log')
@@ -118,12 +118,6 @@ class startup_menu():
     def __init__(self):
         self.root = tk.Tk()
         self.root.update()
-        #top = tk.Frame(self.root)
-        #bottom = tk.Frame(self.root)
-        #top.pack(side=tk.TOP)
-        #bottom.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True)
-
-
         self.folder = ""
 
         tk.Label(self.root, text="Paw Size Setting:").grid(row=0, sticky=tk.W)
@@ -251,7 +245,6 @@ contours are close, return True. If the dist between any two points is greater
 than far_dist, return False, they're automatically not close. This was added
 to improve efficiency, as this becomes quite slow for larger values.
 EDIT 3.14.2018: changed to be element-wise ops on an array for speed improvements.
-TODO 3.14.2018: Consider just taking the mean of all x and all y to compare
 
 Input: cnt1 and cnt2: two opencv contours (so numpy arrays) to be compared and
 close_dist: int that is the max cut off for being close
@@ -259,20 +252,13 @@ far_dist: int that is the min cut off for being automatically considered far
 Output: boolean that's true if they are close, and false if not.
 """
 def find_if_close(cnt1, cnt2, close_dist, far_dist):
-    #start = time.time()
     for i in xrange(cnt2.shape[0]):
             dists = np.sqrt((cnt1[:,0,0] - cnt2[i,0,0])**2 +
                             (cnt1[:,0,1] - cnt2[i,0,1])**2)
             if dists.min() < close_dist:
-                #logger.info('time for close for length ' + str(row1) + ' and ' +
-                           # str(row2) + ' is ' + str(time.time() - start))
                 return True
             elif dists.max() > far_dist:
-                #logger.info('forcing out of dist comparisons')
                 return False
-    #logger.info('time for not for length ' + str(row1) + ' and ' +
-                            #str(row2) + ' is ' + str(time.time() - start))
-    #logger.info('didn"t force out or work out')
     return False
 
 
@@ -495,12 +481,15 @@ class video_analyzer():
             raise Exception("Unable to open video, check installation of OpenCV")
 
         #save the firstframe after converting to greyscale
-        eh, ff = self.video.read()
+        _, ff = self.video.read()
         self.first_frame = cv2.cvtColor(ff, cv2.COLOR_BGR2GRAY)
 
         #these will store the roi and rotation matrix set by the user.
         self.rotationM = None
         self.roi = None
+
+        #this stores the last frame analyzed for saving
+        self.last_frame = None
 
     def get_ff(self):
         return self.first_frame
@@ -511,202 +500,242 @@ class video_analyzer():
     def set_roi(self, roi):
         self.roi = roi
 
+    """performs rotations if desired, then crops to roi
+    TODO: check how this works on color vs greyscale??
+    """
+    def _rotate_and_crop(self, frame):
+        rows, cols = self.first_frame.shape
+        #if doing rotation, rotate, otherwise just keep current frame
+        rotated = frame
+        if self.should_rotate:
+            rotated = cv2.warpAffine(frame, self.rotationM, (cols, rows))
+        #crop to ROI
+        cropped = rotated[self.roi[1]:self.roi[3], self.roi[0]:self.roi[2]]
+        return rotated, cropped
+
+    """As part of combining contours, determine which ones belong to the same
+    cloud. cloud tracks what 'cloud' the contour at the same index as the index
+    in cloud is. Each starts in their own cloud, if they are found to
+    be close with another contour they one is changed to have the
+    same cloud number as the leftmost one.
+
+    Utilizes find_if_close to determine if the two contours should be in
+    the same cloud.
+    If any point on the two is greater than close_dist*10 apart they're
+    automatically not the same. Of course this only applies to two contours so
+    if cnt1 is 15 away from cnt2 and 30 away from cnt3, but cnt3 is only 5
+    away from cnt2, they'll all be combined.
+    """
+    def _assign_clouds(self, contours):
+        cloud = np.linspace(1, len(contours), len(contours))
+        for i, cnt1 in enumerate(contours):
+            x = i #this will track index in the cloud array
+            if i != len(contours) - 1:
+                for cnt2 in contours[i + 1:]:
+                    x += 1
+                    #don't compare if they're already the same
+                    if cloud[i] == cloud[x]:
+                        continue
+                    else:
+                        close = find_if_close(cnt1, cnt2, self.close_dist,
+                                              self.close_dist*10)
+                        if close:
+                            val2 = min(cloud[i], cloud[x])
+                            cloud[x] = cloud[i] = val2
+        return cloud
+
+    """rotate and crop the frame, then convert to greyscale and background
+    subtract. Finally, perform erosions and dilations to minimize noise.
+    Currently background subtraction is very crude, just subtracting the
+    current frame from the first frame.
+    """
+    def _preprocess_frame(self, frame):
+        rows, cols = self.first_frame.shape
+        rotated, cropped = self._rotate_and_crop(frame)
+        grey = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
+        #subtract the first frame
+        subtracted = cv2.absdiff(grey, self.processed_first_frame)
+        #denoise with erosion and dilation
+        subtracted = cv2.erode(subtracted, None, iterations=self.denoising_its)
+        subtracted = cv2.dilate(subtracted, None, iterations=self.denoising_its)
+
+        return rotated, subtracted
+
+    """Based on the cloud indexes, combines all contours in a cloud into
+    a single contour, and then takes the convex hull of that to get one
+    hull per print. Draws this hull.
+    Then, add the hull to hulls_df and unified, to store its info
+    Does a basic size check to determine if the contour should be kept.
+    TODO: modularize the size check?
+    """
+    def _combine_contours(self, contours, cloud, frame_numb, rotated):
+        cloud_numbers = np.unique(cloud)
+        for i in cloud_numbers:
+            pos = np.where(cloud == i)[0]
+            if pos.size != 0:
+                cont = np.vstack(contours[i] for i in pos)
+                hull = cv2.convexHull(cont)
+                cv2.drawContours(rotated, [hull], 0, (255, 255, 255), 3,
+                                 offset=(self.roi[0], self.roi[1]))
+
+                #if the area is too small or too large, mark for deletion
+                to_keep = (cv2.contourArea(hull) > 200) #and
+                    #cv2.contourArea(hull) < 8000)
+                M = cv2.moments(hull)
+
+                if M['m00'] > 0:
+                    #add the hull and consituent contours and info to dataframe
+                    #to get pandas to accept it, must be a list not
+                    #a np array
+                    self.hulls_df = self.hulls_df.append(pd.DataFrame({
+                                         'frame': frame_numb,
+                                         'hull': [hull],
+                                         'contours':
+                                             [[contours[i] for i in pos]],
+                                         'area': M['m00'],
+                                         'X': int(M['m10'] / M['m00']),
+                                         'Y': int(M['m01'] / M['m00']),
+                                         'is_kept': to_keep}),
+                                         ignore_index=True)
+
+                    #TODO: remove eventually, for now save
+                    if to_keep:
+                        self.unified[0].append(hull)
+                        self.unified[1].append(frame_numb)
+                        self.unified[2].append(int(M['m10'] / M['m00']))
+                        self.unified[3].append(int(M['m01'] / M['m00']))
+
+    """Given a frame and the number of that frame, goes through the steps
+    to preprocess it, detect contours, combine contours into hulls, and
+    then save the hulls. Also draws some outputs to be visualized.
+    """
+    def _analyze_one_frame(self, frame, frame_numb):
+        start_time = time.time()
+        rotated, subtracted = self._preprocess_frame(frame)
+        #Do Canny edge detection and then find contours from those edges
+        edges = cv2.Canny(subtracted, self.low_canny, self.high_canny, True)
+        contours = cv2.findContours(edges, cv2.RETR_TREE,
+                                    cv2.CHAIN_APPROX_SIMPLE)[1]
+        cv2.drawContours(rotated, contours, -1, (0, 255, 0), 2,
+                         offset=(self.roi[0], self.roi[1]))
+
+        time_manips = time.time()
+
+        #This section of code combines nearby contours because toes were
+        #often detected separately.
+        if len(contours) > 0:
+            cloud = self._assign_clouds(contours)
+            self._combine_contours(contours, cloud, frame_numb, rotated)
+
+        time_combine = time.time()
+
+        #draw all accepted contours and their centroids
+        if len(self.unified[0]) > 0:
+            cv2.drawContours(rotated, self.unified[0], -1, (255, 255, 255), 2,
+                             offset=(self.roi[0], self.roi[1]))
+            for i in range(len(self.unified[0])):
+                cv2.circle(rotated, (self.unified[2][i] + self.roi[0],
+                                     self.unified[3][i] + self.roi[1]),
+                           5, (0, 0, 255))
+
+        self.last_frame = rotated
+
+        time_draw = time.time()
+        logger.info('time to manipulate: ' + str(time_manips -
+                                                       start_time))
+        logger.info('time to combine for ' + str(len(contours)) +
+                        ': ' + str(time_combine - time_manips))
+        logger.info('time to draw: ' + str(time_draw-time_combine))
+
+        return rotated, len(contours) > 0
+
     def analyze(self):
         start_time = time.time()
-
         cv2.namedWindow(self.rand_name)
         logger.info('beginning analysis on ' + os.path.split(self.filepath)[1])
         #frame 1 has already been read, so start at 1
         frame_numb = 1
-        #stores unified contours, the frames they're from, centroid x + centroid y
-        unified = [[],[],[],[]]
+        #stores unified contours,frame, centroid x + centroid y for easy drawing
+        self.unified = [[],[],[],[]]
         #new dataframe to store the single print info
-        hulls_df = pd.DataFrame(columns = ['frame', 'hull', 'contours',
+        self.hulls_df = pd.DataFrame(columns = ['frame', 'hull', 'contours',
                                              'X','Y', 'area', 'is_kept'])
-        #stores the last frame accessed, so that it can be saved to an image.
-        last_frame = None
         #rotate and crop the first frame using opencv
-        rows, cols = self.first_frame.shape
-        if self.should_rotate:
-            rotatedFF = cv2.warpAffine(self.first_frame, self.rotationM,
-                                   (cols, rows))
-            croppedFF = rotatedFF[self.roi[1]:self.roi[3],
-                                  self.roi[0]:self.roi[2]]
-        else:
-            croppedFF = self.first_frame[self.roi[1]:self.roi[3],
-                                         self.roi[0]:self.roi[2]]
+        _, self.processed_first_frame = self._rotate_and_crop(self.first_frame)
 
         while True:
             while_start_time = time.time()
-
             #rval is bool that's False if a frame not read, meaning vid is over
             rval, frame = self.video.read()
             frame_numb += 1
-
-            #Break out of loop if vid is over
-            if rval == False:
+            if rval == False: #break out of loop if vid is over
                 break
 
-            #transform curr frame to greyscale roi, then background subtract
-            rotated = None
-            if self.should_rotate:
-                rotated = cv2.warpAffine(frame, self.rotationM, (cols, rows))
-            else:
-                rotated = frame
-            cropped = rotated[self.roi[1]:self.roi[3], self.roi[0]:self.roi[2]]
-            grey = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
-            #Background subtraction currently very crude, just
-            #subtracting the current frame from the first frame.
-            subtracted = cv2.absdiff(grey, croppedFF)
-
-            #a few manipulations to remove noise
-            subtracted = cv2.erode(subtracted, None, iterations=self.denoising_its)
-            subtracted = cv2.dilate(subtracted, None, iterations=self.denoising_its)
-
-            #Do Canny edge detection and then find contours from those edges
-            edges = cv2.Canny(subtracted, self.low_canny, self.high_canny, True)
-            contours = cv2.findContours(edges, cv2.RETR_TREE,
-                                        cv2.CHAIN_APPROX_SIMPLE)[1]
-            cv2.drawContours(rotated, contours, -1, (0, 255, 0), 2,
-                             offset=(self.roi[0], self.roi[1]))
-
-            time_manips = time.time()
-
-            #This section of code combines nearby contours because toes were
-            #often detected separately.
-            #cloud tracks what 'cloud' the contour at the same index as the index
-            #in cloud is. Each starts in their own cloud, if they are found to
-            #be close with another contour they one is changed to have the
-            #same cloud number as the leftmost one.
-            cloud = np.linspace(1, len(contours), len(contours))
-            if len(contours) > 0:
-                for i, cnt1 in enumerate(contours):
-                    x = i #this will track index in the cloud array
-                    if i != len(contours) - 1:
-                        for cnt2 in contours[i + 1:]:
-                            x += 1
-                            #don't compare if they're already the same
-                            if cloud[i] == cloud[x]:
-                                continue
-                            else:
-                                #!!!! Here is where it sets the max distance
-                                #contours can be apart and still be the same
-                                #paw - it's 25. And if any point on the two
-                                #is greater than 300 apart they're automatically
-                                #not the same. Of course this only applies to
-                                #two contours so if cnt1 is 15 away from cnt2
-                                #and 30 away from cnt3, but cnt3 is only 5
-                                #away from cnt2, they'll all be combined.
-                                close = find_if_close(cnt1, cnt2, self.close_dist, 250)
-                                if close:
-                                    val2 = min(cloud[i], cloud[x])
-                                    cloud[x] = cloud[i] = val2
-
-                #now combine clouds to be the same contour
-                cloud_numbers = np.unique(cloud)
-                for i in cloud_numbers:
-                    pos = np.where(cloud == i)[0]
-                    if pos.size != 0:
-                        cont = np.vstack(contours[i] for i in pos)
-                        hull = cv2.convexHull(cont)
-                        cv2.drawContours(rotated, [hull], 0, (255, 255, 255), 3,
-                                         offset=(self.roi[0], self.roi[1]))
-
-                        #if the area is too small or too large, mark for deletion
-                        to_keep = (cv2.contourArea(hull) > 200 and
-                            cv2.contourArea(hull) < 8000)
-                        M = cv2.moments(hull)
-
-                        if M['m00'] > 0:
-                            #add the hull and consituent contours and info to dataframe
-                            #to get pandas to accept it, must be a list not
-                            #a np array
-                            hulls_df = hulls_df.append(pd.DataFrame({
-                                                 'frame': frame_numb,
-                                                 'hull': [hull],
-                                                 'contours':
-                                                     [[contours[i] for i in pos]],
-                                                 'area': M['m00'],
-                                                 'X': int(M['m10'] / M['m00']),
-                                                 'Y': int(M['m01'] / M['m00']),
-                                                 'is_kept': to_keep}),
-                                                 ignore_index=True)
-
-                            #TODO: remove eventually, for now save
-                            if to_keep:
-                                unified[0].append(hull)
-                                unified[1].append(frame_numb)
-                                unified[2].append(int(M['m10'] / M['m00']))
-                                unified[3].append(int(M['m01'] / M['m00']))
-
-            time_combine = time.time()
-
-            #draw all accepted contours and their centroids
-            if len(unified[0]) > 1:
-                cv2.drawContours(rotated, unified[0], -1, (255, 255, 255), 2,
-                                 offset=(self.roi[0], self.roi[1]))
-                for i in range(len(unified[0])):
-                    cv2.circle(rotated, (unified[2][i] + self.roi[0],
-                                         unified[3][i] + self.roi[1]),
-                               5, (0, 0, 255))
-
-            #cv2.imshow(os.path.split(self.filepath)[1], rotated)
-            cv2.imshow(self.rand_name, rotated)
-            last_frame = rotated
-
-            time_draw = time.time()
-            logger.info('time to manipulate: ' + str(time_manips -
-                                                           while_start_time))
-            logger.info('time to combine for ' + str(len(contours)) +
-                            ': ' + str(time_combine - time_manips))
-            logger.info('time to draw: ' + str(time_draw-time_combine))
+            analyzed_frame, do_display = self._analyze_one_frame(frame, frame_numb)
 
             time_elapsed_ms = (time.time() - while_start_time) * 1000
             time_for_frame = int(1000/30 - time_elapsed_ms)
             if time_for_frame <= 1:
                 time_for_frame = 2
 
-            if len(contours) >= 1:
+            if do_display:
+                cv2.imshow(self.rand_name, analyzed_frame)
                 key = cv2.waitKey(int(time_for_frame))
                 if key == ord('q'):
                     break
 
-        print time.time() - start_time
-
         self.video.release()
         cv2.destroyAllWindows()
-        if len(unified[0]) > 1:
-            process_contours(unified, hulls_df, self.same_paw_dist,
-                             last_frame, self.filepath,
-                             self.roi, self.do_second_combo,
-                             self.do_tail_deletion)
+        print time.time() - start_time
 
+        if len(self.hulls_df) > 0:
+            assign_print_numbers(self.hulls_df, self.same_paw_dist)
+            combo_prints = create_combo_prints(self.hulls_df,
+                                               self.same_paw_dist,
+                                               self.do_second_combo,
+                                               self.do_tail_deletion,
+                                               self.last_frame.shape[1])
 
-"""Takes unified contours, finds which are likely to be the same print and
-labels them with that print number and stores them in the prints numpy
-structured array. Uses numpy rather than python lists even though everything
-else uses python lists because that's just something that happened I guess.
+            #write outputs
+            combo_prints = combo_prints.astype('int')
+            combo_prints.to_csv(make_file_path(self.filepath, '.csv', 'combo df'),
+                                index=False, columns = ['print_numb','max_area',
+                                                        'X','Y','first_frame',
+                                                        'last_frame', 'is_right',
+                                                        'is_hind', 'frame_max_a'])
+            path = make_file_path(self.filepath, '.csv', 'hull')
+            write_hulls_df = self.hulls_df.fillna(-1) #in order to write, make all nans -1
+            write_hulls_df.drop(['contours', 'hull'], axis=1, inplace=True)
+            write_hulls_df.astype('int').to_csv(path, index=False)
+            self.hulls_df.to_pickle(make_file_path(self.filepath, '.p', 'hull'))
+
+            self.last_frame = draw_final_print_classification(self.last_frame,
+                                            self.roi, combo_prints)
+            cv2.imwrite(make_file_path(self.filepath, '.png'), self.last_frame)
+
+"""Notes on labelling which paw a print is :
+first, group sets of paws: label with a unique id.
+Do this by figuring out which ones are within same_paw_dist of each other
+Iterates through hulls_df and finds which hulls probably belong to the same
+print, and assigns them that number. Also eliminates prints that have only
+one detection, as they are almost always tail or nose detections
 """
-def process_contours(cnts, hulls_df, same_paw_dist, last_frame, filename, roi,
-                     do_second_combo, do_tail_deletion):
+def assign_print_numbers(hulls_df, same_paw_dist):
     hulls_df['print_numb'] = np.nan
     print_numb = 1
     #first we identify areas that are likely to be the same print
     for idx, hull in hulls_df.iterrows():
         this_print = np.nan
-
         #check to see if it was kept
         if hull.is_kept:
             #get all hulls that were kept and occured one frame before
             possible_matches = hulls_df[(hull.frame - hulls_df.frame == 1) &
                                         hulls_df.is_kept]
             for m_idx, match in possible_matches.iterrows():
-                dist = abs(math.hypot(hull.X-match.X,
-                                  hull.Y - match.Y))
+                dist = abs(math.hypot(hull.X-match.X, hull.Y-match.Y))
                 if dist < same_paw_dist: #if a match is found
                     this_print = match.print_numb
                     break
-
             #if it doesn't match previous prints, give it a unique new name
             if np.isnan(this_print):
                 this_print = print_numb
@@ -717,19 +746,12 @@ def process_contours(cnts, hulls_df, same_paw_dist, last_frame, filename, roi,
     #count the occurences of each print number
     counts = hulls_df.print_numb.value_counts()
     single_occurences = counts.index[counts.values == 1]
-    #mark all numbers that occur only once to be discarded, as they are
-    #almost always not real prints
+    #mark all numbers that occur only once to be discarded
     hulls_df.loc[hulls_df.print_numb.isin(single_occurences.values),
                  'is_kept'] = False
 
-    advanced_processing(last_frame, hulls_df, same_paw_dist, filename, roi,
-                        do_second_combo, do_tail_deletion)
-
 """This takes the full listing of things that were detected as prints and combines
 that data into more readable and shortened form - one line per print.
-Notes on labelling which paw a print is :
-first, group sets of paws: label with a unique id.
-Do this by figuring out which ones are within +/- lets say 30 of each other
 
 if no paw has been as far in the x as this one has, its a front paw
 --> aka, if it's the minimum in the x direction of 0:i above it
@@ -737,8 +759,8 @@ if no paw has been as far in the x as this one has, its a front paw
 take the y values, establish the middle of the two extremes (excluding outliers)
 and then divide up right and left based on that
 """
-def advanced_processing(last_frame, hulls_df, same_paw_dist, filename, roi,
-                        do_second_combo, do_tail_deletion):
+def create_combo_prints(hulls_df, same_paw_dist, do_second_combo,
+                        do_tail_deletion, x_size):
     if len(hulls_df) < 0: #if there isn't enough data skip
         return
 
@@ -755,7 +777,7 @@ def advanced_processing(last_frame, hulls_df, same_paw_dist, filename, roi,
     assign_left_right(combo_prints)
 
     #used to track if something is a front paw
-    curr_min_x = last_frame.shape[1]
+    curr_min_x = x_size
     #the furthest forward paw so far is a front paw
     min_xes = grouped_prints.X.min()
     for idx in combo_prints.print_numb.unique():
@@ -770,24 +792,12 @@ def advanced_processing(last_frame, hulls_df, same_paw_dist, filename, roi,
         delete_tail_detections(combo_prints, same_paw_dist, 7, hulls_df=hulls_df)
         assign_left_right(combo_prints)
 
-    #write outputs
-    combo_prints = combo_prints.astype('int')
-    combo_prints.to_csv(make_file_path(filename, '.csv', 'combo df'),
-                        index=False, columns = ['print_numb','max_area',
-                                                'X','Y','first_frame',
-                                                'last_frame', 'is_right',
-                                                'is_hind', 'frame_max_a'])
-    path = make_file_path(filename, '.csv', 'hull')
-    write_hulls_df = hulls_df.fillna(-1) #in order to write, make all nans -1
-    write_hulls_df.drop(['contours', 'hull'], axis=1, inplace=True)
-    write_hulls_df.astype('int').to_csv(path, index=False)
-    hulls_df.to_pickle(make_file_path(filename, '.p', 'hull'))
+    return combo_prints
 
-    draw_final_print_classification(last_frame, filename, roi, combo_prints)
-
-"""Draws the results of advanced processing
+"""Draws circles for prints based on their classification and labels
+them with the final print number.
 """
-def draw_final_print_classification(last_frame, filename, roi, combo_prints):
+def draw_final_print_classification(last_frame, roi, combo_prints):
     for idx, print_ in combo_prints.iterrows():
         if print_.is_right:
             if print_.is_hind:
@@ -807,8 +817,7 @@ def draw_final_print_classification(last_frame, filename, roi, combo_prints):
         cv2.putText(last_frame, str(print_.print_numb),
                     (print_.X + roi[0], print_.Y + roi[1]),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), thickness = 2)
-
-    cv2.imwrite(make_file_path(filename, '.png'), last_frame)
+    return last_frame
 
 """Uses a the midline between the 75th and 25th percentile Y values to
 assign prints as left or right.
@@ -937,6 +946,21 @@ def batch_management(folder, close_dist, low_canny, high_canny, denoising_its,
         setMan.do_rotations()
     setMan.set_rois()
     setMan.run_analyses()
+
+    #TODO: save ROIs in a more logical manner
+    settings_info = {}
+    settings_info['roi'] = setMan.analyzers[0][0].roi
+    settings_info['close distance']  = close_dist
+    settings_info['canny params'] = [low_canny, high_canny]
+    settings_info['denoising iters'] = denoising_its
+    settings_info['same paw dist'] = same_paw_dist
+    settings_info['rotation'] = should_rotate
+    settings_info['second combination'] = do_second_combo
+    settings_info['tail deletion'] = do_tail_deletion
+
+    with open(folder + '/SettingsData.txt', 'w') as outfile:
+        json.dump(settings_info, outfile)
+
 
     pp = pprint.PrettyPrinter(indent=4)
     pp.pprint(blinding_dict)
