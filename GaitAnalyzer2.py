@@ -72,7 +72,7 @@ to use quartiles instead of minimum and maximum.
 4/5/2017
 TODO: fix that apostrophe thing, remove Set_Manager unless it's
 actually necessary?
-TODO: Add a more info button next to each option that explains what it does.
+DONE: Add a more info button next to each option that explains what it does.
 
 04/07/2017
 stopped cropping rois by ten.
@@ -90,6 +90,17 @@ so that things make more sense and can be tested.
 Began splitting up methods in video_analyzer to clean things up.
 ***Removed upper limit on size
 
+4/29/2018: Added message box to display errors in inputs to the StartUpMenu.
+Added more info button to each parameter in StartUpMenu.
+create_combo_prints no longer calls find_matches_and_combine or
+delete_tail_detections. These are called by process_and_write in VideoAnalyzer
+
+***Altered assign_print_numbers so that it selects the closest match, rather
+than just the first one. Also it disallows two prints in the same frame having
+the same print number
+
+
+
 warning: don't put an apostrophe in any folder you want to run through this.
 It freaks out.
 """
@@ -105,6 +116,7 @@ import time
 import pprint
 import pandas as pd
 import json
+import tkMessageBox 
 logging.basicConfig(filename='timing.log',level=logging.INFO)
 logger = logging.getLogger('myapp')
 hdlr = logging.FileHandler('gg.log')
@@ -114,7 +126,7 @@ logger.addHandler(hdlr)
 logger.setLevel(logging.WARN)
 
 
-class startup_menu():
+class StartUpMenu():
     def __init__(self):
         self.root = tk.Tk()
         self.root.update()
@@ -122,17 +134,19 @@ class startup_menu():
 
         tk.Label(self.root, text="Paw Size Setting:").grid(row=0, sticky=tk.W)
         self.dist_set = tk.IntVar()
-        tk.Entry(self.root, width = 15, textvariable=self.dist_set).grid(row=0, column=1)
+        tk.Entry(self.root, width = 15, textvariable=self.dist_set).grid(
+                row=0, column=1)
         self.dist_set.set(25)
 
-        tk.Label(self.root, text="Low Threshold Canny:").grid(row=1, sticky=tk.W)
+        tk.Label(self.root, text="Low Threshold Canny:").grid(
+                row=1, sticky=tk.W)
         self.low_canny = tk.IntVar()
-        tk.Entry(self.root, width = 15, textvariable = self.low_canny).grid(row=1, column=1)
+        tk.Entry(self.root, widt =15, textvariable = self.low_canny).grid(row=1, column=1)
         self.low_canny.set(30)
 
         tk.Label(self.root, text="High Threshold Canny:").grid(row=2, sticky=tk.W)
         self.high_canny = tk.IntVar()
-        tk.Entry(self.root, width = 15, textvariable = self.high_canny).grid(row=2, column=1)
+        tk.Entry(self.root, width=15, textvariable=self.high_canny).grid(row=2, column=1)
         self.high_canny.set(80)
 
         tk.Label(self.root, text="Denoising Iterations:").grid(row=3, sticky=tk.W)
@@ -172,16 +186,52 @@ class startup_menu():
 
         fold_but.grid(row=9)
         self.fold_lab.grid(row=9, column=1)
-        quit_but.grid(row=10, column=0, columnspan=2)
+        quit_but.grid(row=10, column=0, columnspan=3)
+        
+        #add a more info button for each of the parameters
+        parameters = ['paw_size', 'low_canny', 'high_canny', 'dn_it',
+                      'file_type', 'same_paw_dist', 'rotate', 'sec_combo',
+                      'tail_delete']
+        self.buts=[]
+        for i, param in enumerate(parameters):
+            def handler(self=self, param=param):
+                return self.disp_info(param) 
+            self.buts.append(tk.Button(self.root, width=20, bitmap='question',
+                  command=handler).grid(
+                          row=i, column=2, padx=5))
 
         self.root.mainloop()
+        
+    def disp_info(self, parameter):
+        disp_info_dict = {'paw_size': 'This controls how close together two ' +
+                          'contours need to be to be considered a single hull.',
+            'low_canny': 'Higher numbers will result in fewer detected edges,'+
+            ' smaller in more. This number is the number below which something' +
+            ' is considered definitely not an edge.',
+            'high_canny': 'Higher numbers will result in fewer detected edges,'+
+            ' smaller in more. This number is the number above which something' +
+            ' is considered definitely an edge.',
+            'dn_it': 'The number of iterations of dilation and erosion to' +
+            'perform. Larger numbers may reduce detection of edges due to noise',
+            'file_type': 'The file type of the video to be read. All types' +
+            ' supported by opencv should work',
+            'same_paw_dist': 'The maximum distance between two separate print'+
+            ' detections in adjacent frames that will still classify them' +
+            ' as part of the same print',
+            'rotate': 'Whether or not to rotate videos prior to scoring',
+            'sec_combo': 'Whether to try to combine similar prints after'+
+            ' initial assignment',
+            'tail_delete': 'Whether to try to delete prints that are likely' +
+            'actually detections of dragged tails'}
+        tkMessageBox.showinfo(title=parameter,
+                              message=disp_info_dict[parameter])
 
     def close(self):
-        #this is bad form
         if self.folder == "":
-            self.root.destroy()
-            self.root.quit()
-            raise Exception("No Folder Selected")
+            tkMessageBox.showerror(title = 'Select a Folder',
+                                   message = 'You must select a folder of ' +
+                                             'videos')
+            return
 
         try:
             self.low_canny.get()
@@ -190,19 +240,27 @@ class startup_menu():
             self.dn_it.get()
             self.dist_set.get()
         except ValueError:
-            raise ValueError("Input to Denoising Iterations," +
-                " Distance Settings, and Canny settings must be integers")
-
-        batch_management(self.folder, self.dist_set.get(), self.low_canny.get(),
-                         self.high_canny.get(), self.dn_it.get(),
-                         self.same_paw_dist.get(),
-                         video_type=self.file_type.get(),
-                         should_rotate=self.rot.get(),
-                         do_second_combo=self.sec_combo.get(),
-                         do_tail_deletion=self.tail_del.get())
-
+            tkMessageBox.showerror(title = 'Invalid Input',
+                                   message = 'Input to Denoising, Distance,' +
+                                   ' and Canny settings must be integers')
+            return
+        
+        keyword_args_dict = {'folder': self.folder,
+                             'close_dist': self.dist_set.get(),
+                             'low_canny': self.low_canny.get(),
+                             'high_canny': self.high_canny.get(),
+                             'denoising_its': self.dn_it.get(),
+                             'same_paw_dist': self.same_paw_dist.get(),
+                             'video_type': self.file_type.get(),
+                             'should_rotate': self.rot.get(),
+                             'do_second_combo': self.sec_combo.get(),
+                             'do_tail_deletion': self.tail_del.get()
+                             }
+        
         self.root.destroy()
         self.root.quit()
+
+        batch_management(**keyword_args_dict)
 
     def get_folder(self):
         #make a label that displays the chosen folder
@@ -687,83 +745,115 @@ class video_analyzer():
         self.video.release()
         cv2.destroyAllWindows()
         print time.time() - start_time
-
+        
         if len(self.hulls_df) > 0:
-            assign_print_numbers(self.hulls_df, self.same_paw_dist)
-            combo_prints = create_combo_prints(self.hulls_df,
-                                               self.same_paw_dist,
-                                               self.do_second_combo,
-                                               self.do_tail_deletion,
-                                               self.last_frame.shape[1])
+            self.process_and_write()
+    
+def process_and_write(self):
+        assign_print_numbers(self.hulls_df, self.same_paw_dist)
+        combo_prints = create_combo_prints(self.hulls_df, self.same_paw_dist,
+                                           self.last_frame.shape[1])
+        #if two prints of the same classification are close, combine them
+        if self.do_second_combo:
+            find_matches_and_combine(combo_prints, self.same_paw_dist,
+                                     hulls_df=self.hulls_df)
+        #Delete detections that are probably tails, then redo l/r assignment
+        if self.do_tail_deletion:
+            delete_tail_detections(combo_prints, self.same_paw_dist, 7,
+                                   hulls_df=self.hulls_df)
+            assign_left_right(combo_prints)
+        
+        #write outputs
+        combo_prints = combo_prints.astype('int')
+        combo_prints.to_csv(make_file_path(self.filepath, '.csv', 'combo df'),
+                            index=False, columns = ['print_numb','max_area',
+                                                    'X','Y','first_frame',
+                                                    'last_frame', 'is_right',
+                                                    'is_hind', 'frame_max_a'])
+        path = make_file_path(self.filepath, '.csv', 'hull')
+        write_hulls_df = self.hulls_df.fillna(-1) #in order to write, make all nans -1
+        write_hulls_df.drop(['contours', 'hull'], axis=1, inplace=True)
+        write_hulls_df.astype('int').to_csv(path, index=False)
+        self.hulls_df.to_pickle(make_file_path(self.filepath, '.p', 'hull'))
 
-            #write outputs
-            combo_prints = combo_prints.astype('int')
-            combo_prints.to_csv(make_file_path(self.filepath, '.csv', 'combo df'),
-                                index=False, columns = ['print_numb','max_area',
-                                                        'X','Y','first_frame',
-                                                        'last_frame', 'is_right',
-                                                        'is_hind', 'frame_max_a'])
-            path = make_file_path(self.filepath, '.csv', 'hull')
-            write_hulls_df = self.hulls_df.fillna(-1) #in order to write, make all nans -1
-            write_hulls_df.drop(['contours', 'hull'], axis=1, inplace=True)
-            write_hulls_df.astype('int').to_csv(path, index=False)
-            self.hulls_df.to_pickle(make_file_path(self.filepath, '.p', 'hull'))
+        self.last_frame = draw_final_print_classification(self.last_frame,
+                                        self.roi, combo_prints)
+        cv2.imwrite(make_file_path(self.filepath, '.png'), self.last_frame)
+            
 
-            self.last_frame = draw_final_print_classification(self.last_frame,
-                                            self.roi, combo_prints)
-            cv2.imwrite(make_file_path(self.filepath, '.png'), self.last_frame)
-
-"""Notes on labelling which paw a print is :
-first, group sets of paws: label with a unique id.
+"""First, group sets of hulls into prints, and label with a unique id.
 Do this by figuring out which ones are within same_paw_dist of each other
 Iterates through hulls_df and finds which hulls probably belong to the same
 print, and assigns them that number. Also eliminates prints that have only
 one detection, as they are almost always tail or nose detections
+
+4/29/18 if multiple matches are found, assign to number of closest one
+Also now disallows multiple hulls from the same frame being assigned the same
+print number. Instead, will check which of the two hulls is further from
+the matching print in the previous frame, and then assigns that further one
+a new number, so that only the closest one stays a match.
+Also changed so that it only iterates through kept prints.
 """
 def assign_print_numbers(hulls_df, same_paw_dist):
     hulls_df['print_numb'] = np.nan
     print_numb = 1
     #first we identify areas that are likely to be the same print
-    for idx, hull in hulls_df.iterrows():
+    for idx, hull in hulls_df[hulls_df.is_kept].iterrows():
         this_print = np.nan
-        #check to see if it was kept
-        if hull.is_kept:
-            #get all hulls that were kept and occured one frame before
-            possible_matches = hulls_df[(hull.frame - hulls_df.frame == 1) &
-                                        hulls_df.is_kept]
-            for m_idx, match in possible_matches.iterrows():
-                dist = abs(math.hypot(hull.X-match.X, hull.Y-match.Y))
-                if dist < same_paw_dist: #if a match is found
-                    this_print = match.print_numb
-                    break
-            #if it doesn't match previous prints, give it a unique new name
-            if np.isnan(this_print):
-                this_print = print_numb
-                print_numb += 1
-
-            hulls_df.loc[idx, 'print_numb'] = this_print
+        #get hulls that occured one frame before, and are w/i same_paw_dist
+        possible_matches = hulls_df[(hull.frame - hulls_df.frame == 1) &
+            (hulls_df.is_kept) & 
+            (np.sqrt((hull.X-hulls_df.X)**2+(hull.Y-hulls_df.Y)**2) < same_paw_dist)]
+        if len(possible_matches) >= 1: #if multiple matches, pick closest
+            closest_idx = get_closest_hull_index(possible_matches, hull)
+            this_print = possible_matches.print_numb[closest_idx]
+            #if there's another print in same frame w/this number
+            same_frame_hulls = hulls_df[hulls_df.frame==hull.frame]
+            if len(same_frame_hulls[same_frame_hulls.print_numb == this_print])>0:
+                best_idx = get_closest_hull_index(same_frame_hulls,
+                                       possible_matches.loc[closest_idx])
+                if best_idx != idx:
+                    this_print = np.nan
+                else: #if this is a better match
+                    #retroactively assign a unique print numb to the duplicate
+                    hulls_df.loc[(hulls_df.frame==hull.frame) &
+                        hulls_df.print_numb==this_print, 'print_numb'] = print_numb
+                    print_numb += 1
+        elif np.isnan(this_print): #if it doesn't match previous prints
+            this_print = print_numb #give it a unique name
+            print_numb += 1
+        hulls_df.loc[idx, 'print_numb'] = this_print
 
     #count the occurences of each print number
     counts = hulls_df.print_numb.value_counts()
-    single_occurences = counts.index[counts.values == 1]
+    single_occurences = counts.index[counts.values == 1].values
     #mark all numbers that occur only once to be discarded
-    hulls_df.loc[hulls_df.print_numb.isin(single_occurences.values),
-                 'is_kept'] = False
+    hulls_df.loc[hulls_df.print_numb.isin(single_occurences),'is_kept'] = False
+                 
+                 
+def get_closest_hull_index(df, row):
+    """gets the index of the row in df that is closest to row, based on
+    euclidian distance between X and Y column values
+    """
+    best_idx = -1
+    min_dist = np.Inf
+    for m_idx, match in df.iterrows():
+        dist = abs(math.hypot(row.X-match.X, row.Y-match.Y))
+        if dist < min_dist:
+            best_idx, min_dist = m_idx, dist
+    return best_idx
 
 """This takes the full listing of things that were detected as prints and combines
 that data into more readable and shortened form - one line per print.
-
 if no paw has been as far in the x as this one has, its a front paw
 --> aka, if it's the minimum in the x direction of 0:i above it
-
 take the y values, establish the middle of the two extremes (excluding outliers)
 and then divide up right and left based on that
 """
-def create_combo_prints(hulls_df, same_paw_dist, do_second_combo,
-                        do_tail_deletion, x_size):
+def create_combo_prints(hulls_df, same_paw_dist, x_size):
     if len(hulls_df) < 0: #if there isn't enough data skip
         return
-
+    
     grouped_prints = hulls_df.loc[hulls_df.is_kept].groupby(['print_numb'])
     combo_prints = pd.DataFrame(grouped_prints.print_numb.mean())
     combo_prints['first_frame'] = grouped_prints.frame.min().values
@@ -775,7 +865,9 @@ def create_combo_prints(hulls_df, same_paw_dist, do_second_combo,
     combo_prints['Y'] = hulls_df.loc[grouped_prints.area.idxmax(), 'Y'].values
     combo_prints['frame_max_a'] = hulls_df.loc[grouped_prints.area.idxmax(), 'frame'].values
     assign_left_right(combo_prints)
-
+    
+    #for front/hind sorting, first sort prints by first frame then X, ascending
+    combo_prints.sort_values(['first_frame', 'X'], inplace=True)
     #used to track if something is a front paw
     curr_min_x = x_size
     #the furthest forward paw so far is a front paw
@@ -783,15 +875,6 @@ def create_combo_prints(hulls_df, same_paw_dist, do_second_combo,
     for idx in combo_prints.print_numb.unique():
         combo_prints.loc[idx, 'is_hind'] = min_xes[idx] > curr_min_x
         curr_min_x = min(curr_min_x, min_xes[idx])
-
-    #if two prints of the same classification are close, combine them into one
-    if do_second_combo:
-        find_matches_and_combine(combo_prints, same_paw_dist, hulls_df=hulls_df)
-    #Delete detections that are probably tails, then redo left/right assignment
-    if do_tail_deletion:
-        delete_tail_detections(combo_prints, same_paw_dist, 7, hulls_df=hulls_df)
-        assign_left_right(combo_prints)
-
     return combo_prints
 
 """Draws circles for prints based on their classification and labels
@@ -880,7 +963,7 @@ def find_matches_and_combine(combo_prints, same_paw_dist, hulls_df = None):
                 dist = abs(math.hypot(print_.X-match.X, print_.Y-match.Y))
                 #and if they're within 3x the distance value for the initial check
                 if dist < same_paw_dist*3:
-                    combine_prints(combo_prints, m_idx, idx, hulls_df = hulls_df)
+                    combine_prints(combo_prints, m_idx, idx, hulls_df=hulls_df)
     #for testing, return indexes of possible matches
     return possible_matches.index.values
 
@@ -917,10 +1000,15 @@ You can set what extension of video it should look for. Defaults to .mp4 .
 def batch_management(folder, close_dist, low_canny, high_canny, denoising_its,
                      same_paw_dist, video_type = '.mp4', should_rotate = False,
                      do_second_combo = True, do_tail_deletion = True):
-
     #get list of all files of type video_type in that folder
     video_paths = glob.glob(folder + '/*' + video_type)
     if len(video_paths) < 1:
+        root=tk.Tk()
+        tkMessageBox.showerror(title='No Videos',
+                               message='No videos with format ' + video_type +
+                               ' in folder ' + folder)
+        root.destroy()
+        root.quit()
         print 'No videos found!'
         return
 
@@ -967,5 +1055,5 @@ def batch_management(folder, close_dist, low_canny, high_canny, denoising_its,
 
 
 if __name__ == '__main__':
-    startup_menu()
+    StartUpMenu()
     raw_input("Press Enter To Exit: ")
