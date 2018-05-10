@@ -10,20 +10,6 @@ Created on Fri Mar 23 21:08:08 2018
 Created on Tue Jan 09 14:24:15 2018
 
 @author: adesnik-img
-TODO: CONSIDER GOING FULLY Obj Oriented with figure canvases and all?
-Since it doesn't seem to want to play nice with all backends.
-
-
-
-What things are being worked on: pretty sure the radio button system
-isn't fully debugged or functional yet.
-Movie display probably not fully debugged or functional either.
-Need to droubleshoot speed of movie
-the combination system is frankly a mess.
-
-to be added:
-re-adding old deleted contours.
-Undoing
 
 
 TO FIX COMBO: instead of having second_selected act on top of selected print,
@@ -49,11 +35,19 @@ import json
 from matplotlib.widgets import Lasso
 from matplotlib import path
 import cv2
-import time
-import Tkinter as Tk
+import sys
+if (sys.version_info > (3, 0)):
+    import tkinter as tk
+    import tkinter.filedialog as tkFileDialog
+    import tkinter.messagebox as tkMessageBox
+else:
+    import Tkinter as tk
+    import tkFileDialog
+    import tkMessageBox
 from matplotlib.backends.backend_tkagg import (
     FigureCanvasTkAgg, NavigationToolbar2TkAgg)
 from matplotlib.figure import Figure
+import os
 
 
 
@@ -89,7 +83,7 @@ class FigureContainer():
 
         self.print_manager = PrintManager(self.temporal_axis,
                                           self.spatial_axis, self.sel_panel,
-                                          self.vid_axis, self.slide)
+                                          self.vid_axis, self.slide, file)
         self.sel_panel.set_print_manager(self.print_manager)
         self.set_slider_range()
         self.prev_frame = self.slide.val
@@ -101,15 +95,15 @@ class FigureContainer():
                     subplot_spec=g[0,0], wspace=0.1, hspace=0.1)
         #g2.update(left=0.05, right=0.95, wspace=0.02, hspace=.04,
         #         bottom = .2, top = .8)
+        #ax=self.fig.add_subplot(g2[0,0])
+        #Button(ax, 'Load File').on_clicked(
+        #                            self.print_manager.initiate_split_window)
         ax=self.fig.add_subplot(g2[0,0])
-        Button(ax, 'Load File').on_clicked(
-                                    self.print_manager.initiate_split_window)
-        ax=self.fig.add_subplot(g2[0,1])
         Button(ax, 'Save Changes')
-        ax=self.fig.add_subplot(g2[0,2])
-        Button(ax, 'Pause Video')
-        ax=self.fig.add_subplot(g2[0,3])
-        Button(ax, 'View Deleted')
+        #ax=self.fig.add_subplot(g2[0,2])
+        #Button(ax, 'Pause Video')
+        #ax=self.fig.add_subplot(g2[0,3])
+        #Button(ax, 'View Deleted')
 
         #and start the animation
         self.anim = animation.FuncAnimation (self.fig, self.update_func,
@@ -222,18 +216,14 @@ class SelectPanel():
 
 class PrintManager():
     def __init__(self, temporal_axis, spatial_axis, select_panel, vid_axis,
-                 slider):
-        s=time.time()
-        so=time.time()
+                 slider, file):
+        
         self.temporal_axis = temporal_axis
         self.spatial_axis = spatial_axis
         self.select_panel = select_panel
-        self.combo_prints = pd.read_csv('C:/Users/rdb_lab/Videos/new test2/16-087 1 20161115 automated scoring combo df (2).csv',
+        self.combo_prints = pd.read_csv(file.replace('.mp4', ' combo df.csv'),
                                         index_col = 0)
-        self.hulls_df = pd.read_pickle('C:/Users/rdb_lab/Videos/new test2/16-087 1 20161115 automated scoring hull (2).p')
-        print('time to load')
-        print(time.time()-s)
-        s=time.time()
+        self.hulls_df = pd.read_pickle(file.replace('.mp4', 'hull.p'))
         #add paw_id to combo_prints for color and other purposes
         self.combo_prints.is_hind = self.combo_prints.is_hind.astype('bool')
         self.combo_prints.is_right = self.combo_prints.is_right.astype('bool')
@@ -242,10 +232,7 @@ class PrintManager():
         self.slide = slider
 
         self.vid_panel = VideoPanel(vid_axis, self.combo_prints, self.hulls_df,
-                                    self.colors)
-        print('time for vid')
-        print(time.time()-s)
-        s=time.time()
+                                    self.colors, file)
 
         self.selected_print = None
         self.in_combo_state = False
@@ -257,13 +244,7 @@ class PrintManager():
             self.print_dict[print_numb] = []
 
         self.display_paws_temporal()
-        print('time for temporal')
-        print(time.time()-s)
-        s=time.time()
         self.display_paws_spatial()
-        print('time spatial')
-        print(time.time()-s)
-        print(time.time()-so)
 
     def assign_paw_ids(self):
         """add paw_id to combo_prints to color and locate prints"""
@@ -300,7 +281,6 @@ class PrintManager():
         artist = artist[0]
         self.artist_dict[artist] = row.print_numb.values[0]
         self.print_dict[row.print_numb.values[0]].append(artist)
-        #TODO: currently, these will not be deleted. Probably fix that.
         for cnt in row.contours.values[0]:
             artist = self.spatial_axis.plot(cnt[:,0,0], cnt[:,0,1], c='k',
                                    linewidth=1, zorder=1)
@@ -334,8 +314,6 @@ class PrintManager():
         print_numb = self.artist_dict[event.artist]
         if ~self.in_combo_state:
             if event.mouseevent.button == 1: #if left click
-                print(print_numb)
-                print(self.selected_print)
                 if self.selected_print != print_numb:
                     if self.selected_print is not None:
                         self.recolor(self.selected_print)
@@ -566,7 +544,6 @@ class PrintManager():
         #first, replace all of the old, wrong information in hulls_df for orig print
         for idx, points in enumerate(old_hull_points):
             points = points.reshape(points.shape[0],1,2)
-            #TODO: make whatever is stored in frame not an array
             del_idx = self.hulls_df.index[(self.hulls_df.frame == frame[idx][0]) &
                                           (self.hulls_df.print_numb == orig_print)]
             print(del_idx)
@@ -588,7 +565,6 @@ class PrintManager():
         self.add_print_to_combo_prints(new_print_numb, is_right, is_hind)
 
         #then wipe and recreate graphics.
-        #TODO: a lot more needs to be done here, probably.
         self.wipe_graphics()
         self.assign_paw_ids()
         self.display_paws_temporal()
@@ -617,13 +593,13 @@ class VideoPanel():
     has dicts that allow prints to be updated based on changes to combo_prints,
     and also has a frame dict that controls setting artists visible and
     invisible based on the current frame display"""
-    def __init__(self, axis, combo_prints, hulls_df, colors):
+    def __init__(self, axis, combo_prints, hulls_df, colors, file):
         self.spatial_axis = axis
         self.spatial_axis.set_axis_off()
         self.combo_prints = combo_prints
         self.hulls_df = hulls_df
-        self.video_path = 'C:/Users/rdb_lab/Videos/new test2/16-087 1 20161115.mp4'
-        with open('C:/Users/rdb_lab/Videos/new test2/SettingsData.txt', 'rb') as f:
+        self.video_path = file
+        with open(os.path.join(os.path.split(file)[0], 'SettingsData.txt'), 'rb') as f:
             settings = json.load(f)
         self.roi = settings['roi']
         self.video = PyAVReaderIndexed(self.video_path)
@@ -745,17 +721,17 @@ class SplitPrintWindow():
                  vid_panel, invert_axes = True):
         print('init split print window')
 
-        self.root = Tk.Tk()
+        self.root = tk.Tk()
         self.root.wm_title("Embedding in Tk")
 
         self.fig = Figure(figsize=(5, 4), dpi=100)
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)  # A tk.DrawingArea.
         self.canvas.draw()
-        self.canvas.get_tk_widget().pack(side=Tk.TOP, fill=Tk.BOTH, expand=1)
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
 
         self.toolbar = NavigationToolbar2TkAgg(self.canvas, self.root)
         self.toolbar.update()
-        self.canvas._tkcanvas.pack(side=Tk.TOP, fill=Tk.BOTH, expand=1)
+        self.canvas._tkcanvas.pack(side=tk.TOP, fill=tk.BOTH, expand=1)
         self.print_manager = print_manager
         self.combo_prints = combo_prints
         self.print_numb = print_numb
@@ -804,7 +780,7 @@ class SplitPrintWindow():
         self.axes = np.asarray(self.axes)
         self.cid = self.canvas.mpl_connect('button_press_event', self.onpress)
         self.canvas.draw()
-        Tk.mainloop()
+        tk.mainloop()
 
     def create_new_hulls(self, event):
         new_hull_points = []
@@ -848,4 +824,5 @@ class SplitPrintWindow():
         # acquire a lock on the widget drawing
         self.fig.canvas.widgetlock(self.lasso)
 
-FigureContainer()
+file = tkFileDialog.askopenfilename(message = "choose the video file")
+FigureContainer(file)
