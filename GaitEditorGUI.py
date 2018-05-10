@@ -64,9 +64,9 @@ class FigureContainer():
         #because I'm using keys that matlab also uses, remove some bindings
         plt.rcParams['keymap.fullscreen'] = '{'
         plt.rcParams['keymap.yscale'] = '}'
-        self.fig = plt.figure()
+        self.fig = plt.figure(facecolor='w')
         self.fig.set_size_inches(16, 9)
-        g = gspec.GridSpec(5,2, height_ratios = [2, 6, 4, 1, 7],
+        g = gspec.GridSpec(5,2, height_ratios = [2, 6, 4, 1, 6],
                                 width_ratios = [10,3])
         g.update(left=0.05, right=0.95, wspace=0.02, hspace=.04,
                  bottom = .02, top = .98)
@@ -78,7 +78,7 @@ class FigureContainer():
         #self.select_axis = self.fig.add_subplot(g[:,1])
         self.sel_panel = SelectPanel(self.fig, g)
         #create an axes to hold space for the buttons
-        self.fig.add_subplot(g[0,0]).set_axis_off()
+        #self.fig.add_subplot(g[0,0]).set_axis_off()
 
 
         #add a slider
@@ -87,21 +87,34 @@ class FigureContainer():
         self.slide = Slider(slid_ax, 'Frame', 0, 100,
                             valinit=0, valfmt='%0.0f')
 
-        self.print_manager = PrintManager(self.temporal_axis, self.spatial_axis,
-                                          self.sel_panel, self.vid_axis,
-                                          self.slide)
+        self.print_manager = PrintManager(self.temporal_axis,
+                                          self.spatial_axis, self.sel_panel,
+                                          self.vid_axis, self.slide)
         self.sel_panel.set_print_manager(self.print_manager)
         self.set_slider_range()
         self.prev_frame = self.slide.val
         #activate pick events
         self.fig.canvas.mpl_connect('pick_event', self.print_manager.on_pick)
-        self.fig.canvas.mpl_connect('key_press_event', self.print_manager.on_key_press)
+        self.fig.canvas.mpl_connect('key_press_event',
+                                    self.print_manager.on_key_press)
+        g2 = gspec.GridSpecFromSubplotSpec(1,4,
+                    subplot_spec=g[0,0], wspace=0.1, hspace=0.1)
+        #g2.update(left=0.05, right=0.95, wspace=0.02, hspace=.04,
+        #         bottom = .2, top = .8)
+        ax=self.fig.add_subplot(g2[0,0])
+        Button(ax, 'Load File').on_clicked(
+                                    self.print_manager.initiate_split_window)
+        ax=self.fig.add_subplot(g2[0,1])
+        Button(ax, 'Save Changes')
+        ax=self.fig.add_subplot(g2[0,2])
+        Button(ax, 'Pause Video')
+        ax=self.fig.add_subplot(g2[0,3])
+        Button(ax, 'View Deleted')
 
         #and start the animation
-        #self.anim = animation.FuncAnimation (self.fig, self.update_func,
-        #                                     fargs= (),  interval = 15,
-        #                                     repeat = True)
-        #TODO: do I want a show here?
+        self.anim = animation.FuncAnimation (self.fig, self.update_func,
+                                             fargs= (),  interval = 15,
+                                             repeat = True)
         plt.show()
 
     def update_func(self, j):
@@ -139,6 +152,20 @@ class SelectPanel():
         self.fh_axis = fig.add_subplot(g[0,0])
         self.fh_axis.set_axis_off()
 
+        #button_holder = fig.add_subplot(outer[1,1])
+        #button_holder.set_axis_off()
+        g = gspec.GridSpecFromSubplotSpec(4,1,
+                    subplot_spec=outer[2,1], wspace=0.1, hspace=0.1)
+        #g.update(left=0.15, right=0.85, wspace=0.02, hspace=.04,
+        #         bottom = .02, top = .98)
+        ax = fig.add_subplot(g[1,0])
+        Button(ax, 'Delete')
+        ax = fig.add_subplot(g[2,0])
+        Button(ax, 'Merge')
+        ax = fig.add_subplot(g[3,0])
+        Button(ax, 'Split Print')
+
+
     def set_print_manager(self, pm):
         self.print_manager = pm
 
@@ -149,8 +176,8 @@ class SelectPanel():
         self.title_axes.set_title('Print ' + str(print_numb))
         self.lr_but = RadioButtons(self.lr_axis, ('Left', 'Right'), active = int(is_right))
         self.fh_but = RadioButtons(self.fh_axis, ('Front', 'Hind'), active = int(is_hind))
-        self.lr_but.on_clicked(self.print_manager.on_radio_click)
-        self.fh_but.on_clicked(self.print_manager.on_radio_click)
+        self.lr_but.on_clicked(self.print_manager.change_print_classification)
+        self.fh_but.on_clicked(self.print_manager.change_print_classification)
         plt.draw()
 
     def clear_axes(self):
@@ -221,7 +248,6 @@ class PrintManager():
         s=time.time()
 
         self.selected_print = None
-
         self.in_combo_state = False
         self.second_selected = None #used when in combo state to hold the other print
 
@@ -240,7 +266,7 @@ class PrintManager():
         print(time.time()-so)
 
     def assign_paw_ids(self):
-        #add paw_id to combo_prints to color and locate prints
+        """add paw_id to combo_prints to color and locate prints"""
         self.combo_prints.loc[~self.combo_prints.is_right, 'paw_id'] = 0
         self.combo_prints.loc[(~self.combo_prints.is_right) &
                             ~self.combo_prints.is_hind, 'paw_id'] = 1
@@ -249,11 +275,12 @@ class PrintManager():
                             & ~self.combo_prints.is_hind, 'paw_id'] = 3
 
     def display_paws_temporal(self):
+        """plots matplotlib rects to make a hildebrand plot for the gait"""
         self.temporal_axis.clear()
         for print_numb, print_ in self.combo_prints.iterrows():
             patch = patches.Rectangle((print_.first_frame, print_.paw_id),
                                       print_.last_frame-print_.first_frame, 1,
-                                      facecolor = self.colors[int(print_.paw_id)],
+                                      facecolor=self.colors[int(print_.paw_id)],
                                       picker = 2, linewidth = 3)
             self.temporal_axis.add_patch(patch)
             self.artist_dict[patch] = print_numb
@@ -263,21 +290,32 @@ class PrintManager():
         self.temporal_axis.set_ylim(0, 4)
         self.temporal_axis.set_axis_off()
 
-    def display_paws_spatial(self, invert_axes = True):
-        for idx, row_ in self.hulls_df[self.hulls_df.is_kept].iterrows():
-            #get paw id from combo prints
-            paw_id = self.combo_prints.paw_id[row_.print_numb]
-            #TODO: make these closed
-            artist = self.spatial_axis.plot(row_.hull[:,0,0], row_.hull[:,0,1],
-                                            c = self.colors[int(paw_id)], picker=5)
-            artist = artist[0]
-            self.artist_dict[artist] = row_.print_numb
-            self.print_dict[row_.print_numb].append(artist)
-            #TODO: currently, these will not be deleted. Probably fix that.
-            for cnt in row_.contours:
-                artist = self.spatial_axis.plot(cnt[:,0,0], cnt[:,0,1], c = 'k',
-                                       linewidth = .5, zorder = 1)
-                self.print_dict[row_.print_numb].append(artist[0])
+    def plot_hull_row_spatial(self, row):
+        """plot a single row of the hulls_df in the spatial axis"""
+        paw_id = int(self.combo_prints.paw_id[row.print_numb].values[0])
+        hull = row.hull.values[0]
+        artist = self.spatial_axis.plot(hull[:,0,0], hull[:,0,1], linewidth=4,
+                                        c=self.colors[paw_id], picker=5,
+                                        alpha=.8)
+        artist = artist[0]
+        self.artist_dict[artist] = row.print_numb.values[0]
+        self.print_dict[row.print_numb.values[0]].append(artist)
+        #TODO: currently, these will not be deleted. Probably fix that.
+        for cnt in row.contours.values[0]:
+            artist = self.spatial_axis.plot(cnt[:,0,0], cnt[:,0,1], c='k',
+                                   linewidth=1, zorder=1)
+            self.print_dict[row.print_numb.values[0]].append(artist[0])
+
+    def display_paws_spatial(self, invert_axes = True, minimal = True):
+        if minimal:
+            for idx, print_ in self.combo_prints.iterrows():
+                row = self.hulls_df.loc[(self.hulls_df.print_numb == idx) &
+                                        (self.hulls_df.frame ==
+                                         print_.frame_max_a)]
+                self.plot_hull_row_spatial(row)
+        else:
+            for idx, row in self.hulls_df[self.hulls_df.is_kept].iterrows():
+                self.plot_hull_row_spatial(row)
         self.spatial_axis.set_ylim(self.combo_prints.Y.min()-30,
                                        self.combo_prints.Y.max()+30)
         if invert_axes:
@@ -296,15 +334,19 @@ class PrintManager():
         print_numb = self.artist_dict[event.artist]
         if ~self.in_combo_state:
             if event.mouseevent.button == 1: #if left click
+                print(print_numb)
+                print(self.selected_print)
                 if self.selected_print != print_numb:
                     if self.selected_print is not None:
                         self.recolor(self.selected_print)
                     self.color_selected(print_numb)
                     self.selected_print = print_numb
-                    self.select_panel.set_selected(self.selected_print,
-                                self.combo_prints.is_right[self.selected_print],
-                                self.combo_prints.is_hind[self.selected_print])
-                    self.slide.set_val(self.combo_prints.first_frame[print_numb]-2)
+                    self.select_panel.set_selected(
+                            self.selected_print,
+                            self.combo_prints.is_right[self.selected_print],
+                            self.combo_prints.is_hind[self.selected_print])
+                    self.slide.set_val(
+                            self.combo_prints.first_frame[print_numb] - 2)
                 plt.draw()
             elif event.mouseevent.button == 3: #if right click
                 print('hey ho a pirates life for me')
@@ -318,22 +360,15 @@ class PrintManager():
                 plt.draw()
 
     def on_key_press(self, event):
+        """handles each of the different key events.
+        l,r,h, and f change the print classification of selected print
+        d deletes the print, and has a helper method to do it.
+        c and enter
+        """
         if self.selected_print is not None:
             #if its a keypress to set one of the paw id props
             if event.key in ['l','r','h','f']:
-                if event.key == 'l':
-                    self.combo_prints.loc[self.selected_print, 'is_right'] = False
-                if event.key == 'r':
-                    self.combo_prints.loc[self.selected_print, 'is_right'] = True
-                if event.key == 'h':
-                    self.combo_prints.loc[self.selected_print, 'is_hind'] = True
-                if event.key == 'f':
-                    self.combo_prints.loc[self.selected_print, 'is_hind'] = False
-                self.assign_paw_ids()
-                self.recolor(self.selected_print)
-                self.adjust_temporal(self.selected_print)
-                self.select_panel.clear_axes()
-                self.selected_print = None
+                self.change_print_classification(event.key)
             elif event.key == 'd':
                 self.delete_print(self.selected_print)
             elif event.key == 'c':
@@ -370,31 +405,39 @@ class PrintManager():
                         self.in_combo_state = False
                         self.recolor(self.second_selected)
                         self.second_selected = None
-                        self.select_panel.set_selected(self.selected_print,
-                                    self.combo_prints.is_right[self.selected_print],
-                                    self.combo_prints.is_hind[self.selected_print])
+                        self.select_panel.set_selected(
+                            self.selected_print,
+                            self.combo_prints.is_right[self.selected_print],
+                            self.combo_prints.is_hind[self.selected_print])
             #TODO: TEMPORARY
             elif event.key == 'm':
-                print('split key pressed')
-                SplitPrintWindow(self, self.combo_prints, self.hulls_df,
-                                  self.selected_print, self.vid_panel)
+                self.initiate_split_window()
 
-    def on_radio_click(self, label):
-        """when radio buttons are clicked, adjust print classification
-        accordingly"""
-        if label == 'Left':
+
+    def initiate_split_window(self):
+        if self.selected_print is not None:
+            SplitPrintWindow(self, self.combo_prints, self.hulls_df,
+                              self.selected_print, self.vid_panel)
+
+    def change_print_classification(self, label):
+        """when radio buttons are clicked, or the correct key is pressed,
+        l,r,h, and f change the print classification of selected print,
+        resets selected print to None, and then adjusts the plots
+        """
+        if label == 'Left' or 'l':
             self.combo_prints.loc[self.selected_print, 'is_right'] = False
-        if label == 'Right':
+        if label == 'Right' or 'r':
             self.combo_prints.loc[self.selected_print, 'is_right'] = True
-        if label == 'Hind':
+        if label == 'Hind' or 'h':
             self.combo_prints.loc[self.selected_print, 'is_hind'] = True
-        if label == 'Front':
+        if label == 'Front' or 'f':
             self.combo_prints.loc[self.selected_print, 'is_hind'] = False
         self.assign_paw_ids()
         self.recolor(self.selected_print)
         self.adjust_temporal(self.selected_print)
         self.select_panel.clear_axes()
         self.selected_print = None
+
 
     def delete_print(self, print_numb):
         """handles the nuts and bolts of removing a print graphically and
@@ -621,7 +664,7 @@ class VideoPanel():
         self.display_paws_spatial()
 
     #TODO: DO INHERITANCE
-    def display_paws_spatial(self, invert_axes = True):
+    def display_paws_spatial(self, invert_axes = True, do_edges = False):
         for idx, row_ in self.hulls_df[self.hulls_df.is_kept].iterrows():
             #get paw id from combo prints
             paw_id = self.combo_prints.paw_id[row_.print_numb]
@@ -633,11 +676,13 @@ class VideoPanel():
             self.print_dict[row_.print_numb].append(artist)
             self.frame_dict[row_.frame].append(artist)
 
-            for cnt in row_.contours:
-                artist = self.spatial_axis.plot(cnt[:,0,0], cnt[:,0,1], c = 'k',
-                                       linewidth=.5, zorder=2, visible=False)
-                self.print_dict[row_.print_numb].append(artist[0])
-                self.frame_dict[row_.frame].append(artist[0])
+            if do_edges:
+                for cnt in row_.contours:
+                    artist = self.spatial_axis.plot(
+                                cnt[:,0,0], cnt[:,0,1], c='k', linewidth=.5,
+                                zorder=2, visible=False)
+                    self.print_dict[row_.print_numb].append(artist[0])
+                    self.frame_dict[row_.frame].append(artist[0])
         self.spatial_axis.set_ylim(self.combo_prints.Y.min()-30,
                                    self.combo_prints.Y.max()+30)
         if invert_axes:
@@ -699,6 +744,18 @@ class SplitPrintWindow():
     def __init__(self, print_manager, combo_prints, hulls_df, print_numb,
                  vid_panel, invert_axes = True):
         print('init split print window')
+
+        self.root = Tk.Tk()
+        self.root.wm_title("Embedding in Tk")
+
+        self.fig = Figure(figsize=(5, 4), dpi=100)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)  # A tk.DrawingArea.
+        self.canvas.draw()
+        self.canvas.get_tk_widget().pack(side=Tk.TOP, fill=Tk.BOTH, expand=1)
+
+        self.toolbar = NavigationToolbar2TkAgg(self.canvas, self.root)
+        self.toolbar.update()
+        self.canvas._tkcanvas.pack(side=Tk.TOP, fill=Tk.BOTH, expand=1)
         self.print_manager = print_manager
         self.combo_prints = combo_prints
         self.print_numb = print_numb
@@ -706,8 +763,7 @@ class SplitPrintWindow():
         n_frames = (self.combo_prints.last_frame[print_numb] -
                     self.first_frame) + 1
         grid_size = int(np.ceil(np.sqrt(n_frames)))
-        self.fig, self.axes = plt.subplots(grid_size, grid_size)
-        self.axes = self.axes.reshape(grid_size*grid_size, 1)
+        self.axes=[]
         self.fig.set_size_inches(16, 9)
         button_axes = self.fig.add_axes([.01, .01, .05, .05])
         self.button = Button(button_axes, 'Split')
@@ -716,39 +772,39 @@ class SplitPrintWindow():
         these_hulls = hulls_df[hulls_df.print_numb==print_numb]
         self.collections = {}
         self.xyes = {}
-        for i, ax in enumerate(self.axes):
-            ax=ax[0]
+        for i in range(0, n_frames):
+            ax=self.fig.add_subplot(grid_size,grid_size,i+1)
+            self.axes.append(ax)
             ax.set_axis_off()
-            if i < n_frames:
-                frame = vid_panel.get_frame(self.first_frame+i)
-                X, Y = self.combo_prints.X[print_numb], self.combo_prints.Y[print_numb]
-                ax.imshow(frame)
-                xes = []
-                yes = []
-                for c in these_hulls.contours[these_hulls.frame == self.first_frame+i].values[0]:
-                    #add all to a single list to make one collection
-                    xes = xes + list(c[:,0,0])
-                    yes = yes + list(c[:,0,1])
-                self.collections[ax] = ax.scatter(xes, yes)
-                self.xyes[ax] = self.collections[ax].get_offsets()
-                #set it to have list of facecolors so that selection works
-                facecolors = self.collections[ax].get_facecolors()
-                npts = len(self.xyes[ax])
-                facecolors = np.tile(facecolors, npts).reshape(npts, -1)
-                self.collections[ax].set_facecolor(facecolors)
+            frame = vid_panel.get_frame(self.first_frame+i)
+            X = self.combo_prints.X[print_numb]
+            Y = self.combo_prints.Y[print_numb]
+            ax.imshow(frame)
+            xes = []
+            yes = []
+            for c in (these_hulls.contours[these_hulls.frame ==
+                                           self.first_frame+i].values[0]):
+                #add all to a single list to make one collection
+                xes = xes + list(c[:,0,0])
+                yes = yes + list(c[:,0,1])
+            self.collections[ax] = ax.scatter(xes, yes)
+            self.xyes[ax] = self.collections[ax].get_offsets()
+            #set it to have list of facecolors so that selection works
+            facecolors = self.collections[ax].get_facecolors()
+            npts = len(self.xyes[ax])
+            facecolors = np.tile(facecolors, npts).reshape(npts, -1)
+            self.collections[ax].set_facecolor(facecolors)
 
-                if invert_axes:
-                    ax.set_xlim(X+50,X-50)
-                else:
-                    ax.set_xlim(X-50,X+50)
-                ax.set_ylim(Y-50,Y+50)
-                ax.set_title('Frame ' + str(self.first_frame+i))
-
-        self.cid = self.fig.canvas.mpl_connect('button_press_event', self.onpress)
-        print('right before show')
-        #TODO: is this the problem
-        plt.draw()
-        print('after show')
+            if invert_axes:
+                ax.set_xlim(X+50,X-50)
+            else:
+                ax.set_xlim(X-50,X+50)
+            ax.set_ylim(Y-50,Y+50)
+            ax.set_title('Frame ' + str(self.first_frame+i))
+        self.axes = np.asarray(self.axes)
+        self.cid = self.canvas.mpl_connect('button_press_event', self.onpress)
+        self.canvas.draw()
+        Tk.mainloop()
 
     def create_new_hulls(self, event):
         new_hull_points = []
@@ -756,7 +812,7 @@ class SplitPrintWindow():
         frame = []
         for ax, collection in self.collections.iteritems():
             #make np array of bools with whether color matches the selection color for each point
-            inds = np.asarray([True if np.array_equal(i,[.4,.4,.9, 1.0])
+            inds = np.asarray([True if np.array_equal(i, [.4,.4,.9, 1.0])
                     else False for i in collection.get_facecolors()])
             #use np bool indexing to get x,y values for selected and unselected
             new_hull_points.append(self.xyes[ax][inds])
@@ -764,7 +820,7 @@ class SplitPrintWindow():
             frame.append(self.first_frame + np.where(self.axes==ax)[0])
         self.print_manager.split_print(new_hull_points, old_hull_points,
                                        frame, self.print_numb)
-        plt.close(self.fig)
+        self.root.destroy()
 
     def callback(self, verts):
         facecolors = self.collections[self.current_axes].get_facecolors()
@@ -778,7 +834,6 @@ class SplitPrintWindow():
         self.collections[self.current_axes].set_facecolor(facecolors)
         self.fig.canvas.draw_idle()
         self.fig.canvas.widgetlock.release(self.lasso)
-        plt.draw()
         del self.lasso
 
     #TODO: troubleshoot widget locks
@@ -789,7 +844,6 @@ class SplitPrintWindow():
         if event.inaxes is None: return
         print('passed axes')
         self.current_axes = event.inaxes
-
         self.lasso = Lasso(event.inaxes, (event.xdata, event.ydata), self.callback)
         # acquire a lock on the widget drawing
         self.fig.canvas.widgetlock(self.lasso)
