@@ -106,8 +106,15 @@ It freaks out.
 """
 import cv2
 import numpy as np
-import Tkinter as tk
-import tkFileDialog
+import sys
+if (sys.version_info > (3, 0)):
+    import tkinter as tk
+    import tkinter.filedialog as tkFileDialog
+    import tkinter.messagebox as tkMessageBox
+else:
+    import Tkinter as tk
+    import tkFileDialog
+    import tkMessageBox 
 import os.path
 import math
 import glob
@@ -116,7 +123,6 @@ import time
 import pprint
 import pandas as pd
 import json
-import tkMessageBox 
 logging.basicConfig(filename='timing.log',level=logging.INFO)
 logger = logging.getLogger('myapp')
 hdlr = logging.FileHandler('gg.log')
@@ -310,7 +316,7 @@ far_dist: int that is the min cut off for being automatically considered far
 Output: boolean that's true if they are close, and false if not.
 """
 def find_if_close(cnt1, cnt2, close_dist, far_dist):
-    for i in xrange(cnt2.shape[0]):
+    for i in range(0, cnt2.shape[0]):
             dists = np.sqrt((cnt1[:,0,0] - cnt2[i,0,0])**2 +
                             (cnt1[:,0,1] - cnt2[i,0,1])**2)
             if dists.min() < close_dist:
@@ -370,7 +376,7 @@ class RoiChooser():
                     cv2.destroyAllWindows()
                     break
 
-        print "roi finished"
+        print("roi finished")
         return roi
 
     """Responds to user clicks by setting the top and bottom of the roi. If both
@@ -378,14 +384,14 @@ class RoiChooser():
     """
     def mouse_click(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
-            print y
+            print(y)
             self.top = y
             if self.top != None and self.bottom != None:
                 cv2.rectangle(self.curr_bg, (0, self.top),
                               (self.orig_bg.shape[1], self.bottom),
                               (0, 0, 255), thickness=2)
         elif event == cv2.EVENT_RBUTTONDOWN:
-            print y
+            print(y)
             self.bottom = y
             if self.top != None and self.bottom != None:
                 cv2.rectangle(self.curr_bg, (0, self.top),
@@ -426,7 +432,7 @@ class Rotater():
                     cv2.destroyAllWindows()
                     break
 
-        print 'rotation finished'
+        print('rotation finished')
         return self.matrix
 
     def mouse_click(self, event, x, y, flags, param):
@@ -453,7 +459,7 @@ class Rotater():
                         min(self.pt_one[0], self.pt_two[0]))
             tanval = deltay/float(deltax)
             angle = math.degrees(np.arctan(tanval))
-            print angle
+            print(angle)
             rows, cols = self.orig_bg.shape
 
             #if the left is higher than the right rotate ccw
@@ -744,19 +750,19 @@ class video_analyzer():
 
         self.video.release()
         cv2.destroyAllWindows()
-        print time.time() - start_time
+        print(time.time() - start_time)
         
         if len(self.hulls_df) > 0:
             self.process_and_write()
     
-def process_and_write(self):
+    def process_and_write(self):
         assign_print_numbers(self.hulls_df, self.same_paw_dist)
         combo_prints = create_combo_prints(self.hulls_df, self.same_paw_dist,
                                            self.last_frame.shape[1])
         #if two prints of the same classification are close, combine them
         if self.do_second_combo:
             find_matches_and_combine(combo_prints, self.same_paw_dist,
-                                     hulls_df=self.hulls_df)
+                                     hulls_df=self.hulls_df, file=self.filepath)
         #Delete detections that are probably tails, then redo l/r assignment
         if self.do_tail_deletion:
             delete_tail_detections(combo_prints, self.same_paw_dist, 7,
@@ -803,7 +809,7 @@ def assign_print_numbers(hulls_df, same_paw_dist):
         #get hulls that occured one frame before, and are w/i same_paw_dist
         possible_matches = hulls_df[(hull.frame - hulls_df.frame == 1) &
             (hulls_df.is_kept) & 
-            (np.sqrt((hull.X-hulls_df.X)**2+(hull.Y-hulls_df.Y)**2) < same_paw_dist)]
+            (np.sqrt(((hull.X-hulls_df.X)**2+(hull.Y-hulls_df.Y)**2).astype('float64')) < same_paw_dist)]
         if len(possible_matches) >= 1: #if multiple matches, pick closest
             closest_idx = get_closest_hull_index(possible_matches, hull)
             this_print = possible_matches.print_numb[closest_idx]
@@ -924,10 +930,14 @@ def combine_prints(combo_prints, idx1, idx2, hulls_df = None):
     if (combo_prints.loc[idx1].is_right != combo_prints.loc[idx2].is_right or
         combo_prints.loc[idx1].is_hind != combo_prints.loc[idx2].is_hind):
             raise ValueError('prints to combine must have same classification')
+    if idx1 == idx2:
+        raise ValueError('cannot combine print with itself')
 
     #keep the higher indexed print to avoid errors
-    keep_idx = max(idx1, idx2)
-    del_idx = min(idx1, idx2)
+    if combo_prints.index.get_loc(idx1) > combo_prints.index.get_loc(idx2):
+        keep_idx, del_idx = idx1, idx2
+    else:
+        keep_idx, del_idx = idx2, idx1
     big_idx = combo_prints.loc[[idx1,idx2]].max_area.idxmax()
     #update keep_idx row to have the area,X,Y, ect from the max area row
     cols_trans = ['max_area','X','Y', 'frame_max_a']
@@ -951,7 +961,8 @@ and within three frames of the current print. If they are also within
 a specified from the print (right now, 3x the distance of the initial check),
 the two are combined
 """
-def find_matches_and_combine(combo_prints, same_paw_dist, hulls_df = None):
+def find_matches_and_combine(combo_prints, same_paw_dist, hulls_df = None, file=None):
+    print(combo_prints)
     for idx, print_ in combo_prints.iterrows():
         possible_matches = combo_prints[(combo_prints.is_right == print_.is_right) &
                                 (combo_prints.is_hind == print_.is_hind) &
@@ -960,6 +971,13 @@ def find_matches_and_combine(combo_prints, same_paw_dist, hulls_df = None):
                                     (combo_prints.index != idx)]
         if len(possible_matches) > 0:
             for m_idx, match in possible_matches.iterrows():
+                #if it has already been merged into another print
+                if idx not in combo_prints.index: break
+                print(combo_prints)
+                print(m_idx)
+                print(idx)
+                print(possible_matches)
+                print(file)
                 dist = abs(math.hypot(print_.X-match.X, print_.Y-match.Y))
                 #and if they're within 3x the distance value for the initial check
                 if dist < same_paw_dist*3:
@@ -1009,7 +1027,7 @@ def batch_management(folder, close_dist, low_canny, high_canny, denoising_its,
                                ' in folder ' + folder)
         root.destroy()
         root.quit()
-        print 'No videos found!'
+        print('No videos found!')
         return
 
     np.random.shuffle(video_paths)
@@ -1056,4 +1074,8 @@ def batch_management(folder, close_dist, low_canny, high_canny, denoising_its,
 
 if __name__ == '__main__':
     StartUpMenu()
-    raw_input("Press Enter To Exit: ")
+    
+    if (sys.version_info > (3, 0)):
+        input('Press Enter To Exit: ')
+    else:
+        raw_input("Press Enter To Exit: ")
