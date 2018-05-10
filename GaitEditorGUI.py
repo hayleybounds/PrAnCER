@@ -29,7 +29,7 @@ import matplotlib.animation as animation
 import numpy as np
 import matplotlib.patches as patches
 import pandas as pd
-from test_alt_pims import PyAVReaderIndexed
+from mod_pims import PyAVReaderIndexed
 from GaitAnalyzer2 import combine_prints
 import json
 from matplotlib.widgets import Lasso
@@ -54,8 +54,8 @@ import os
 class FigureContainer():
     """instantiates figure and axes, creates all other objects. Holds the
     animation"""
-    def __init__(self):
-        #because I'm using keys that matlab also uses, remove some bindings
+    def __init__(self, file):
+        #because I'm using keys that matplotlib also uses, remove some bindings
         plt.rcParams['keymap.fullscreen'] = '{'
         plt.rcParams['keymap.yscale'] = '}'
         self.fig = plt.figure(facecolor='w')
@@ -99,7 +99,8 @@ class FigureContainer():
         #Button(ax, 'Load File').on_clicked(
         #                            self.print_manager.initiate_split_window)
         ax=self.fig.add_subplot(g2[0,0])
-        Button(ax, 'Save Changes')
+        self.sav_but = Button(ax, 'Save Changes')
+        self.sav_but.on_clicked(self.print_manager.save)
         #ax=self.fig.add_subplot(g2[0,2])
         #Button(ax, 'Pause Video')
         #ax=self.fig.add_subplot(g2[0,3])
@@ -152,12 +153,11 @@ class SelectPanel():
                     subplot_spec=outer[2,1], wspace=0.1, hspace=0.1)
         #g.update(left=0.15, right=0.85, wspace=0.02, hspace=.04,
         #         bottom = .02, top = .98)
-        ax = fig.add_subplot(g[1,0])
-        Button(ax, 'Delete')
-        ax = fig.add_subplot(g[2,0])
-        Button(ax, 'Merge')
-        ax = fig.add_subplot(g[3,0])
-        Button(ax, 'Split Print')
+        self.del_but_ax = fig.add_subplot(g[1,0])
+        #self.merge_but_ax = fig.add_subplot(g[2,0])
+        self.split_but_ax = fig.add_subplot(g[3,0])
+        self.del_but_ax.set_axis_off()
+        self.split_but_ax.set_axis_off()
 
 
     def set_print_manager(self, pm):
@@ -172,6 +172,14 @@ class SelectPanel():
         self.fh_but = RadioButtons(self.fh_axis, ('Front', 'Hind'), active = int(is_hind))
         self.lr_but.on_clicked(self.print_manager.change_print_classification)
         self.fh_but.on_clicked(self.print_manager.change_print_classification)
+        self.del_but_ax.set_axis_on()
+        self.del_but = Button(self.del_but_ax, 'Delete')
+        self.del_but.on_clicked(lambda x:self.print_manager.delete_print(print_numb))
+        #self.merge_but = Button(self.merge_but_ax, 'Merge')
+        #self.merge_but.on_clicked(lambda x:self.print_manager.delete(print_numb))
+        self.split_but_ax.set_axis_on()
+        self.split_but = Button(self.split_but_ax, 'Split Print')
+        self.split_but.on_clicked(lambda x: self.print_manager.initiate_split_window())
         plt.draw()
 
     def clear_axes(self):
@@ -182,6 +190,11 @@ class SelectPanel():
         self.lr_axis.set_axis_off()
         self.fh_axis.clear()
         self.fh_axis.set_axis_off()
+        self.del_but_ax.clear()
+        self.del_but_ax.set_axis_off()
+        #self.merge_but_ax.clear()
+        self.split_but_ax.clear()
+        self.split_but_ax.set_axis_off()
         self.lr_but = None
         self.fh_but = None
         plt.draw()
@@ -221,9 +234,15 @@ class PrintManager():
         self.temporal_axis = temporal_axis
         self.spatial_axis = spatial_axis
         self.select_panel = select_panel
-        self.combo_prints = pd.read_csv(file.replace('.mp4', ' combo df.csv'),
+        self.orig_file=file
+        try:
+            self.combo_prints = pd.read_csv(file.replace('.mp4', ' combo df.csv'),
                                         index_col = 0)
-        self.hulls_df = pd.read_pickle(file.replace('.mp4', 'hull.p'))
+            self.hulls_df = pd.read_pickle(file.replace('.mp4', ' hull.p'))
+        except:
+            self.combo_prints = pd.read_csv(file.replace('.mp4', ' automated scoring combo df.csv'),
+                                            index_col = 0)
+            self.hulls_df = pd.read_pickle(file.replace('.mp4', ' automated scoring hull.p'))
         #add paw_id to combo_prints for color and other purposes
         self.combo_prints.is_hind = self.combo_prints.is_hind.astype('bool')
         self.combo_prints.is_right = self.combo_prints.is_right.astype('bool')
@@ -393,7 +412,9 @@ class PrintManager():
 
 
     def initiate_split_window(self):
+        print('trying to init')
         if self.selected_print is not None:
+            print('and there wasnt no selection')
             SplitPrintWindow(self, self.combo_prints, self.hulls_df,
                               self.selected_print, self.vid_panel)
 
@@ -402,14 +423,15 @@ class PrintManager():
         l,r,h, and f change the print classification of selected print,
         resets selected print to None, and then adjusts the plots
         """
-        if label == 'Left' or 'l':
+        if label == 'Left' or label=='l':
             self.combo_prints.loc[self.selected_print, 'is_right'] = False
-        if label == 'Right' or 'r':
+        elif label == 'Right' or label=='r':
             self.combo_prints.loc[self.selected_print, 'is_right'] = True
-        if label == 'Hind' or 'h':
+        elif label == 'Hind' or label=='h':
             self.combo_prints.loc[self.selected_print, 'is_hind'] = True
-        if label == 'Front' or 'f':
+        elif label == 'Front' or label=='f':
             self.combo_prints.loc[self.selected_print, 'is_hind'] = False
+
         self.assign_paw_ids()
         self.recolor(self.selected_print)
         self.adjust_temporal(self.selected_print)
@@ -527,9 +549,14 @@ class PrintManager():
             'last_frame': [these_hulls.frame.max()], 'is_right': [is_right],
             'is_hind': [is_hind], 'paw_id': [-1]}
         #convert all but bools to int
-        for k, v in row_dict.iteritems():
-            if k not in ['is_right', 'is_hind']:
-                row_dict[k] = [int(num) for num in v]
+        try:
+            for k, v in row_dict.iteritems():
+                if k not in ['is_right', 'is_hind']:
+                    row_dict[k] = [int(num) for num in v]
+        except:
+            for k, v in row_dict.items():
+                if k not in ['is_right', 'is_hind']:
+                    row_dict[k] = [int(num) for num in v]
         new_df = pd.DataFrame.from_dict(row_dict)
         new_df.set_index('print_numb', inplace=True)
         #this is not an in place operation, so the change must be given to vid panel
@@ -586,6 +613,18 @@ class PrintManager():
         for print_numb in self.combo_prints.index.values:
             self.print_dict[print_numb] = []
 
+    def save(self, event):
+        combo_prints = self.combo_prints.astype('int')
+        combo_prints.to_csv(file.replace('.mp4', ' combo df.csv'),
+                            index=True, columns = ['max_area',
+                                                    'X','Y','first_frame',
+                                                    'last_frame', 'is_right',
+                                                    'is_hind', 'frame_max_a'])
+        write_hulls_df = self.hulls_df.fillna(-1) #in order to write, make all nans -1
+        write_hulls_df.drop(['contours', 'hull'], axis=1, inplace=True)
+        write_hulls_df.astype('int').to_csv(file.replace('.mp4', ' hull.csv'),
+                                            index=False)
+        self.hulls_df.to_pickle(file.replace('.mp4', ' hull.p'))
 
 
 class VideoPanel():
@@ -692,7 +731,10 @@ class VideoPanel():
             #TODO: do this better
             for frame in range(self.combo_prints.first_frame[print_numb],
                                self.combo_prints.last_frame[print_numb]+1):
-                self.frame_dict[frame].remove(artist)
+                try:
+                    self.frame_dict[frame].remove(artist)
+                except:
+                    continue
             artist.remove()
         self.print_dict.pop(print_numb, None)
         plt.draw()
@@ -715,6 +757,8 @@ class VideoPanel():
     def get_frame(self, frame):
         #The frames in the dfs start at frame 1, but video is zero indexed
         return self.video[frame-1][self.roi[1]:self.roi[3], self.roi[0]:self.roi[2]]
+    
+    
 
 class SplitPrintWindow():
     def __init__(self, print_manager, combo_prints, hulls_df, print_numb,
@@ -786,7 +830,11 @@ class SplitPrintWindow():
         new_hull_points = []
         old_hull_points = []
         frame = []
-        for ax, collection in self.collections.iteritems():
+        if (sys.version_info > (3, 0)):
+            iterab = self.collections.items()
+        else:
+            iterab = self.collections.iteritems()
+        for ax, collection in iterab:
             #make np array of bools with whether color matches the selection color for each point
             inds = np.asarray([True if np.array_equal(i, [.4,.4,.9, 1.0])
                     else False for i in collection.get_facecolors()])
@@ -814,15 +862,12 @@ class SplitPrintWindow():
 
     #TODO: troubleshoot widget locks
     def onpress(self, event):
-        print('hey a press')
         if self.fig.canvas.widgetlock.locked(): return
-        print('passed widget lock')
         if event.inaxes is None: return
-        print('passed axes')
         self.current_axes = event.inaxes
         self.lasso = Lasso(event.inaxes, (event.xdata, event.ydata), self.callback)
         # acquire a lock on the widget drawing
         self.fig.canvas.widgetlock(self.lasso)
 
-file = tkFileDialog.askopenfilename(message = "choose the video file")
+file = tkFileDialog.askopenfilename(title = "choose the video file")
 FigureContainer(file)
