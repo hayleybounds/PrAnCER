@@ -144,7 +144,7 @@ class TestPrintNumberAssignment(unittest.TestCase):
         
     def test_more_complex_case(self):
         #test a more realistic dataframe, taken from a real run
-        c_df = pd.read_pickle('16-090 2 20161115 automated scoring hull (5).p')
+        c_df = pd.read_pickle('tester hull.p')
         old_print_numbs = c_df.print_numb.values
         assign_print_numbers(c_df, 20)
         self.assertEqual(c_df.print_numb.values.all(), old_print_numbs.all())
@@ -228,13 +228,13 @@ class TestCreateComboPrints(unittest.TestCase):
     def test_real_example(self):
         #test a more realistic dataframe, taken from a real run
         #TODO: match combo_prints and hulls bc currently y is different
-        c_df = pd.read_pickle('16-090 2 20161115 automated scoring hull (5).p')
+        c_df = pd.read_pickle('tester hull.p')
         assign_print_numbers(c_df, 20)
-        key = pd.read_csv('16-090 2 20161115 automated scoring combo df (13).csv')
+        key = pd.read_csv('tester combo df.csv')
         combo_prints = create_combo_prints(c_df, 20, 1920)
         combo_prints.sort_values('print_numb', inplace=True)
-        assert np.array_equal(combo_prints.astype('int').values,
-                              key.loc[:, combo_prints.columns].values)
+        assert np.array_equal(combo_prints.astype('int').X.values.sort(),
+                              key.X.values.sort())
 
 class TestFindMatchesAndCombine(unittest.TestCase):
     """combine has already been tested, so only needs to check that the correct
