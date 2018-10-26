@@ -50,7 +50,6 @@ arguments that were previously built in from gui.
 2/10/2017: Adding pretty printing for the blinding key
 
 3/5/2017: Trying to fix some false tail detections.
-
 3/18/2017: URGENT: Noticed problems w/how second combo is doing frames -
 it seems to be taking first and last frames from only one? I wasn't paying
 attention and saved a few comments changes when I was talking to Ishan, maybe
@@ -962,7 +961,6 @@ a specified from the print (right now, 3x the distance of the initial check),
 the two are combined
 """
 def find_matches_and_combine(combo_prints, same_paw_dist, hulls_df = None, file=None):
-    print(combo_prints)
     for idx, print_ in combo_prints.iterrows():
         possible_matches = combo_prints[(combo_prints.is_right == print_.is_right) &
                                 (combo_prints.is_hind == print_.is_hind) &
@@ -973,11 +971,6 @@ def find_matches_and_combine(combo_prints, same_paw_dist, hulls_df = None, file=
             for m_idx, match in possible_matches.iterrows():
                 #if it has already been merged into another print
                 if idx not in combo_prints.index: break
-                print(combo_prints)
-                print(m_idx)
-                print(idx)
-                print(possible_matches)
-                print(file)
                 dist = abs(math.hypot(print_.X-match.X, print_.Y-match.Y))
                 #and if they're within 3x the distance value for the initial check
                 if dist < same_paw_dist*3:

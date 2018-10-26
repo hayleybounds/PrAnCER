@@ -517,23 +517,24 @@ class PrintManager():
         and whether or not to keep them, find the hull, extract the
         summary info, and then add them to the hulls_df
         """
-        hull = cv2.convexHull(contours)
-        M = cv2.moments(hull)
-        #must have nonzero area to be added
-        if M['m00'] > 0:
-            row_dict = {'frame': frame,
-                        'hull': [hull],
-                        'contours': [[contours]],
-                        'area': M['m00'],
-                        'X': int(M['m10'] / M['m00']),
-                        'Y': int(M['m01'] / M['m00']),
-                        'is_kept': to_keep}
-            if print_numb is not None:
-                row_dict['print_numb'] = print_numb
-            new_df = pd.DataFrame(row_dict)
-            #this is not an in place operation, so the change must be given to vid panel
-            self.hulls_df = self.hulls_df.append(new_df, ignore_index=True)
-            self.vid_panel.set_hulls_df(self.hulls_df)
+        if len(contours) > 0:
+            hull = cv2.convexHull(contours.astype('int32'))
+            M = cv2.moments(hull)
+            #must have nonzero area to be added
+            if M['m00'] > 0:
+                row_dict = {'frame': frame,
+                            'hull': [hull],
+                            'contours': [[contours]],
+                            'area': M['m00'],
+                            'X': int(M['m10'] / M['m00']),
+                            'Y': int(M['m01'] / M['m00']),
+                            'is_kept': to_keep}
+                if print_numb is not None:
+                    row_dict['print_numb'] = print_numb
+                new_df = pd.DataFrame(row_dict)
+                #this is not an in place operation, so the change must be given to vid panel
+                self.hulls_df = self.hulls_df.append(new_df, ignore_index=True)
+                self.vid_panel.set_hulls_df(self.hulls_df)
 
     def add_print_to_combo_prints(self, print_numb, is_right, is_hind):
         """based on the info from hulls df, add the given print with given
@@ -763,12 +764,11 @@ class VideoPanel():
 class SplitPrintWindow():
     def __init__(self, print_manager, combo_prints, hulls_df, print_numb,
                  vid_panel, invert_axes = True):
-        print('init split print window')
 
         self.root = tk.Tk()
-        self.root.wm_title("Embedding in Tk")
+        self.root.wm_title("Split the Selected Print")
 
-        self.fig = Figure(figsize=(5, 4), dpi=100)
+        self.fig = Figure(figsize=(10,8), dpi=100)
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)  # A tk.DrawingArea.
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)

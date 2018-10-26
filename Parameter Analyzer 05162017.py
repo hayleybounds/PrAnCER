@@ -27,8 +27,8 @@ TODO: can change all bacs_ff.loc[:,""].iloc[] to backs_df.ColName.iloc[]
 TODO: Add back the percent supported parameters.
 """
 
-import Tkinter as tk
-import tkFileDialog
+import tkinter as tk
+import tkinter.filedialog as tkFileDialog
 import os.path
 import math
 import glob
@@ -98,7 +98,8 @@ class StartupMenu():
         except ValueError:
             raise ValueError("Input to Number of Prints and Experimental Animals must be integers")
 
-        if self.numb_exps.get < 4:
+         
+        if self.numb_prints.get() < 4:
             raise ValueError("Number Prints to Analyze must be >=4")
 
         hind_prints_to_analyze = self.numb_prints.get()
@@ -164,7 +165,7 @@ def get_avg_bos(prints_df, name):
 
     #give a warning for partial prints
     if backs_df.loc[:,'centroidx'].iloc[0] > 1880:
-        print 'warning, may be partial print for ' + name
+        print('warning, may be partial print for ' + name)
 
     boses = []
 
@@ -273,7 +274,7 @@ def get_speed_by_stride(prints_df, name, which_stride):
 
     if ((backs_df.loc[:, 'RorL'].iloc[i] == "r" and backs_df.loc[:, 'RorL'].iloc[i-1] != "l") or
             (backs_df.loc[:, 'RorL'].iloc[i] == "l" and backs_df.loc[:, 'RorL'].iloc[i-1] != "r")):
-        print 'for ' + name + ' paws out of order'
+        print('for ' + name + ' paws out of order')
         return
 
     length = math.sqrt((backs_df.loc[:, 'centroidx'].iloc[i-2] -
@@ -436,7 +437,7 @@ def get_h_f_positions(prints_df, name, numbPrints=4):
 
     #check for paws matched multiple times
     if len(set([x for x in final_matches if final_matches.count(x) > 1])) > 0:
-        print "for " + name
+        print ("for " + name)
         print (set([x for x in final_matches if final_matches.count(x) > 1]))
 
     return [abs_positions, x_positions, y_positions]
@@ -474,7 +475,7 @@ def get_group(name):
 
 
 def make_day_file(subfolder, week, day):
-    print week + " and day: " + day
+    print (week + " and day: " + day)
 
     #find all .csv  in that folder
     file_paths = glob.glob(subfolder + '/*' + '.csv')
@@ -570,7 +571,7 @@ def make_day_file(subfolder, week, day):
                  'SD of Absolute Interlimb Distance',
                  'SD of X Interlimb Distance', 'SD of Y Interlimb Distance']]
 
-    output.to_csv(newpath, cols=['filename', 'week', 'day', 'group', 'rat id', 'trial',
+    output.to_csv(newpath, columns=['filename', 'week', 'day', 'group', 'rat id', 'trial',
                  'Base of Support', 'Stride Length', 'Step Length',
                  'Stance Duration', 'Run Speed', 'Average of Maximum Areas',
                  'Stride Speed First Stride', 'Stride Speed Second Stride',
@@ -587,13 +588,14 @@ def make_day_file(subfolder, week, day):
 
 def do_all(folder):
     subfolders = glob.glob(folder + '/*')
-
+    
     #remove anything with a '.', so any non-folders
-    subfolders = [ x for x in subfolders if '.' not in x ]
-
+    subfolders = [ x for x in subfolders if os.path.isdir(x)]
+    
     outputs = []
     #do the thing for all of the subfolders
     for fold in subfolders:
+        
         name = os.path.split(fold)[1]
         week = name.split(' ')[1]
         day = name.split(' ')[3]
@@ -601,11 +603,21 @@ def do_all(folder):
 
     newpath = make_file_path(folder)
     all_days = pd.concat(outputs, ignore_index = True)
-    all_days.to_csv(newpath, cols=['filename', 'day', 'group', 'rat', 'trial',
-                                   'bos', 'stride', 'step', 'frame'])
+    all_days.to_csv(newpath, columns=['filename', 'week', 'day', 'group', 'rat id', 'trial',
+                 'Base of Support', 'Stride Length', 'Step Length',
+                 'Stance Duration', 'Run Speed', 'Average of Maximum Areas',
+                 'Stride Speed First Stride', 'Stride Speed Second Stride',
+                 'Stride Speed Third Stride', 'Right Limb Stance to Swing Ratio',
+                 'Left Limb Stance to Swing Ratio', 'Right Limb Duty Factor',
+                 'Left Limb Duty Factor', 'Mean Absolute Interlimb Distance',
+                 'Mean X Interlimb Distance', 'Mean Y Interlimb Distance',
+                 'CV of Absolute Interlimb Distance',
+                 'CV of X Interlimb Distance', 'CV of Y Interlimb Distance',
+                 'SD of Absolute Interlimb Distance',
+                 'SD of X Interlimb Distance', 'SD of Y Interlimb Distance'])
 
 
 
 if __name__ == '__main__':
     StartupMenu()
-    raw_input("Press Enter To Exit: ")
+    #raw_input("Press Enter To Exit: ")

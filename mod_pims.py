@@ -308,6 +308,7 @@ class PyAVReaderIndexed(FramesSequence):
 
     def _initialize(self):
         "Scan through and tabulate contents to enable random access."
+        print(self.filename)
         container = av.open(self.filename)
 
         # Build a toc
