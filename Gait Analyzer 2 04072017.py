@@ -88,8 +88,8 @@ It freaks out.
 """
 import cv2
 import numpy as np
-import Tkinter as tk
-import tkFileDialog
+import tkinter as tk
+import tkinter.filedialog as tkFileDialog
 import csv
 import os.path
 import math
@@ -237,8 +237,8 @@ Output: boolean that's true if they are close, and false if not.
 def find_if_close(cnt1, cnt2, close_dist, far_dist):
     #start = time.time()
     row1, row2 = cnt1.shape[0], cnt2.shape[0]
-    for i in xrange(row1):
-        for j in xrange(row2):
+    for i in range(0,row1):
+        for j in range(0,row2):
             #get pythagorean distance between two points
             dist = math.sqrt((cnt1[i][0][0] - cnt2[j][0][0])**2 +
                             (cnt1[i][0][1] - cnt2[j][0][1])**2)
@@ -306,7 +306,6 @@ class RoiChooser():
                     cv2.destroyAllWindows()
                     break
 
-        print "roi finished"
         return roi
 
     """Responds to user clicks by setting the top and bottom of the roi. If both
@@ -314,14 +313,14 @@ class RoiChooser():
     """
     def mouse_click(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
-            print y
+            
             self.top = y
             if self.top != None and self.bottom != None:
                 cv2.rectangle(self.curr_bg, (0, self.top),
                               (self.orig_bg.shape[1], self.bottom),
                               (0, 0, 255), thickness=2)
         elif event == cv2.EVENT_RBUTTONDOWN:
-            print y
+            
             self.bottom = y
             if self.top != None and self.bottom != None:
                 cv2.rectangle(self.curr_bg, (0, self.top),
@@ -362,7 +361,7 @@ class Rotater():
                     cv2.destroyAllWindows()
                     break
 
-        print 'rotation finished'
+        print('rotation finished')
         return self.matrix
 
     def mouse_click(self, event, x, y, flags, param):
@@ -389,7 +388,7 @@ class Rotater():
                         min(self.pt_one[0], self.pt_two[0]))
             tanval = deltay/float(deltax)
             angle = math.degrees(np.arctan(tanval))
-            print angle
+            print(angle)
             rows, cols = self.orig_bg.shape
 
             #if the left is higher than the right rotate ccw
@@ -633,7 +632,7 @@ class video_analyzer():
                 if key == ord('q'):
                     break
 
-        print time.time() - start_time
+        print(time.time() - start_time)
 
         self.video.release()
         cv2.destroyAllWindows()
@@ -699,7 +698,7 @@ def process_contours(cnts, last_frame, filename, roi, do_second_combo):
     EVENTUALLY: renumber prints so print numbering isn't so odd.
     """
     maximum = int(prints['print_numb'].max())+1
-    for i in xrange(maximum):
+    for i in range(0,maximum):
         #generate a random color to draw with
         color = (random.randint(0, 255), random.randint(0, 255),
                  random.randint(0, 255))
@@ -793,6 +792,9 @@ def advanced_processing(last_frame, prints, filename, roi, do_second_combo):
                     combo_prints[7][i] == combo_prints[7][i-j] and
                     (combo_prints[5][i-j]+4 > combo_prints[4][i] or
                     combo_prints[5][i]+4 > combo_prints[4][i-j])):
+                    print(combo_prints)
+                    print(i)
+                    print(j)
                     #and if they're within 3x the distance value for the initial check
                     #TODO: make this modular to initial dist check
                     dist = abs(math.hypot(combo_prints[2][i] - combo_prints[2][i-j],
@@ -863,7 +865,7 @@ def advanced_processing(last_frame, prints, filename, roi, do_second_combo):
 
 
     newpath = make_file_path(filename, '.csv', 'analyzed')
-
+    """
     with open(newpath, 'wb') as f:
         writer = csv.writer(f)
         #write a header row for the csv
@@ -877,7 +879,8 @@ def advanced_processing(last_frame, prints, filename, roi, do_second_combo):
                              combo_prints[4][i], combo_prints[5][i],
                              combo_prints[6][i], combo_prints[7][i],
                              combo_prints[8][i]])
-    print "file written to " + newpath
+    print("file written to " + newpath)
+    """
 
     for i in range(0, len(combo_prints[0])):
         col = None
@@ -907,6 +910,8 @@ def advanced_processing(last_frame, prints, filename, roi, do_second_combo):
 
 
 def write_file(prints, filename):
+    return
+
     newpath = make_file_path(filename, '.csv')
 
     with open(newpath, 'wb') as f:
@@ -938,7 +943,7 @@ def batch_management(folder, close_dist, low_canny, high_canny, denoising_its, v
     #get list of all files of type video_type in that folder
     video_paths = glob.glob(folder + '/*' + video_type)
     if len(video_paths) < 1:
-        print 'No videos found!'
+        print('No videos found!')
         return
 
     np.random.shuffle(video_paths)
