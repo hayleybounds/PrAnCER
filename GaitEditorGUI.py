@@ -29,6 +29,7 @@ import matplotlib.animation as animation
 import numpy as np
 import matplotlib.patches as patches
 import pandas as pd
+
 from mod_pims import PyAVReaderIndexed
 from GaitAnalyzer2 import combine_prints
 import json
@@ -73,14 +74,62 @@ class FigureContainer():
         self.sel_panel = SelectPanel(self.fig, g)
         #create an axes to hold space for the buttons
         #self.fig.add_subplot(g[0,0]).set_axis_off()
+        g2 = gspec.GridSpecFromSubplotSpec(1,4,
+                    subplot_spec=g[0,0], wspace=0.1, hspace=0.1)
+        
+        ax=self.fig.add_subplot(g2[0,0])
+        self.sav_but = Button(ax, 'Save Changes')
+        ax=self.fig.add_subplot(g2[0,2])
+        self.pp_but = Button(ax, 'Pause Video')
+        self.pp_but.on_clicked(self.toggle_play)
+        #ax=self.fig.add_subplot(g2[0,3])
+        #self.pick_file_but = Button(ax, 'Load File')
+        #self.pick_file_but.on_clicked(self.load_new_file)
 
-
+        self.is_playing = True
         #add a slider
         slid_ax = self.fig.add_subplot(g[3,0])
-        #TODO: does this actually force it to an int
         self.slide = Slider(slid_ax, 'Frame', 0, 100,
                             valinit=0, valfmt='%0.0f')
 
+        self.init_for_file(file)
+       
+        
+
+        #and start the animation
+        self.anim = animation.FuncAnimation (self.fig, self.update_func,
+                                             fargs= (),  interval = 15,
+                                             repeat = True)
+        plt.show()
+
+    def load_new_file(self, _):
+        self.init_for_file(pick_file())
+
+    def toggle_play(self, _):
+        self.is_playing = not self.is_playing
+        if self.is_playing:
+            self.pp_but.label.set_text('Pause') # works
+        else:
+            self.pp_but.label.set_text('Play')
+
+
+    def update_func(self, j):
+        """based on the value of the slider, update the video
+        """
+        if self.is_playing:
+            #the min and max range don't seem to be working, so manually check
+            i = int(self.slide.val)+1
+            if i < self.slide.valmin:
+                i=self.slide.valmin
+            if i > self.slide.valmax:
+                i=self.slide.valmin
+            self.print_manager.change_frame(self.prev_frame,i)
+            #self.slide.set_val(i%len(self.left_panel.frames))
+            self.slide.set_val(i)
+            self.prev_frame = i
+            return j
+
+    def init_for_file(self, file):
         self.print_manager = PrintManager(self.temporal_axis,
                                           self.spatial_axis, self.sel_panel,
                                           self.vid_axis, self.slide, file)
@@ -91,38 +140,14 @@ class FigureContainer():
         self.fig.canvas.mpl_connect('pick_event', self.print_manager.on_pick)
         self.fig.canvas.mpl_connect('key_press_event',
                                     self.print_manager.on_key_press)
-        g2 = gspec.GridSpecFromSubplotSpec(1,4,
-                    subplot_spec=g[0,0], wspace=0.1, hspace=0.1)
         #g2.update(left=0.05, right=0.95, wspace=0.02, hspace=.04,
         #         bottom = .2, top = .8)
         #ax=self.fig.add_subplot(g2[0,0])
         #Button(ax, 'Load File').on_clicked(
         #                            self.print_manager.initiate_split_window)
-        ax=self.fig.add_subplot(g2[0,0])
-        self.sav_but = Button(ax, 'Save Changes')
+        
         self.sav_but.on_clicked(self.print_manager.save)
-        #ax=self.fig.add_subplot(g2[0,2])
-        #Button(ax, 'Pause Video')
-        #ax=self.fig.add_subplot(g2[0,3])
-        #Button(ax, 'View Deleted')
-
-        #and start the animation
-        self.anim = animation.FuncAnimation (self.fig, self.update_func,
-                                             fargs= (),  interval = 15,
-                                             repeat = True)
-        plt.show()
-
-    def update_func(self, j):
-        """based on the value of the slider, update the video
-        """
-        i = int(self.slide.val)+1
-        if i > self.slide.valmax:
-            i=self.slide.valmin
-        self.print_manager.change_frame(self.prev_frame,i)
-        #self.slide.set_val(i%len(self.left_panel.frames))
-        self.slide.set_val(i)
-        self.prev_frame = i
-        return j
+        
 
     def set_slider_range(self):
         """set the slider to range between combo_prints first frame and
@@ -137,7 +162,7 @@ class SelectPanel():
     Alse displays information on the combination process
     """
     def __init__(self, fig, outer):
-        #TODO: you may want this to not be a title, for now seems good enough
+        #you may want this to not be a title, for now seems good enough
         self.title_axes = fig.add_subplot(outer[1,1])
         self.title_axes.set_axis_off()
         g = gspec.GridSpecFromSubplotSpec(1,2,
@@ -154,7 +179,7 @@ class SelectPanel():
         #g.update(left=0.15, right=0.85, wspace=0.02, hspace=.04,
         #         bottom = .02, top = .98)
         self.del_but_ax = fig.add_subplot(g[1,0])
-        #self.merge_but_ax = fig.add_subplot(g[2,0])
+        self.merge_but_ax = fig.add_subplot(g[2,0])
         self.split_but_ax = fig.add_subplot(g[3,0])
         self.del_but_ax.set_axis_off()
         self.split_but_ax.set_axis_off()
@@ -175,8 +200,8 @@ class SelectPanel():
         self.del_but_ax.set_axis_on()
         self.del_but = Button(self.del_but_ax, 'Delete')
         self.del_but.on_clicked(lambda x:self.print_manager.delete_print(print_numb))
-        #self.merge_but = Button(self.merge_but_ax, 'Merge')
-        #self.merge_but.on_clicked(lambda x:self.print_manager.delete(print_numb))
+        self.merge_but = Button(self.merge_but_ax, 'Merge')
+        self.merge_but.on_clicked(lambda x:self.print_manager.toggle_combo_state())
         self.split_but_ax.set_axis_on()
         self.split_but = Button(self.split_but_ax, 'Split Print')
         self.split_but.on_clicked(lambda x: self.print_manager.initiate_split_window())
@@ -192,7 +217,8 @@ class SelectPanel():
         self.fh_axis.set_axis_off()
         self.del_but_ax.clear()
         self.del_but_ax.set_axis_off()
-        #self.merge_but_ax.clear()
+        self.merge_but_ax.clear()
+        self.merge_but_ax.set_axis_off()
         self.split_but_ax.clear()
         self.split_but_ax.set_axis_off()
         self.lr_but = None
@@ -206,11 +232,11 @@ class SelectPanel():
         props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
 
         # place a text box in upper left in axes coords
-        self.title_axes.text(0.05, 0.95, "Left click on another print to " +
+        self.title_axes.text(0.05, 0.95, "Left click on another print to \n" +
                              "combine with print " + str(print_numb) + "\n" +
                              "Or press c again to cancel",
                              transform=self.title_axes.transAxes,
-                             fontsize=24, verticalalignment='top', bbox=props)
+                             fontsize=14, verticalalignment='top', bbox=props)
 
     def display_combo_text2(self, print_numb, print_numb2):
         """Displays directions when combo state is active
@@ -221,9 +247,9 @@ class SelectPanel():
         # place a text box in upper left in axes coords
         self.title_axes.text(0.05, 0.95, "To combine print " + str(print_numb) +
                              "\n" + "and print " + str(print_numb2) + "\n" +
-                             "Press enter. Or press c again to cancel",
+                             "Press enter. \n Or press c again to cancel",
                              transform=self.title_axes.transAxes,
-                             fontsize=24, verticalalignment='top', bbox=props)
+                             fontsize=14, verticalalignment='top', bbox=props)
 
 
 
@@ -281,7 +307,7 @@ class PrintManager():
             patch = patches.Rectangle((print_.first_frame, print_.paw_id),
                                       print_.last_frame-print_.first_frame, 1,
                                       facecolor=self.colors[int(print_.paw_id)],
-                                      picker = 2, linewidth = 3)
+                                      picker = 2, linewidth = 3, edgecolor = 'k')
             self.temporal_axis.add_patch(patch)
             self.artist_dict[patch] = print_numb
             self.print_dict[print_numb].append(patch)
@@ -331,7 +357,7 @@ class PrintManager():
         and the other print.
         """
         print_numb = self.artist_dict[event.artist]
-        if ~self.in_combo_state:
+        if not self.in_combo_state:
             if event.mouseevent.button == 1: #if left click
                 if self.selected_print != print_numb:
                     if self.selected_print is not None:
@@ -369,35 +395,27 @@ class PrintManager():
             elif event.key == 'd':
                 self.delete_print(self.selected_print)
             elif event.key == 'c':
-                self.in_combo_state = ~self.in_combo_state
-                if self.in_combo_state:
-                    self.select_panel.display_combo_text(self.selected_print)
-                else:
-                    if self.second_selected is not None:
-                        self.recolor(self.second_selected)
-                        self.second_selected = None
-                    self.select_panel.set_selected(self.selected_print,
-                                    self.combo_prints.is_right[self.selected_print],
-                                    self.combo_prints.is_hind[self.selected_print])
+                self.toggle_combo_state()
             elif event.key == 'enter':
                 if self.in_combo_state and self.second_selected is not None:
+                    print(self.second_selected, self.selected_print)
                     #the prints have to have the same front and side class
                     if (self.combo_prints.is_right[self.second_selected] == \
                         self.combo_prints.is_right[self.selected_print] and
                         self.combo_prints.is_hind[self.second_selected] == \
                         self.combo_prints.is_hind[self.selected_print]):
-                            #TODO: a temporary hack
+                            #TODO: make this combine hulls if in same frame
                             self.combo_prints['print_numb'] = self.combo_prints.index.values
-                            combine_prints(self.combo_prints, self.selected_print,
+                            keep, del_=combine_prints(self.combo_prints, self.selected_print,
                                            self.second_selected,
                                            hulls_df=self.hulls_df)
-                            self.handle_combine_graphics(self.selected_print,
-                                                         self.second_selected)
+                            self.handle_combine_graphics(keep, del_)
                             self.in_combo_state = False
                             self.second_selected = None
                             self.selected_print = None
                     else:
                         #TODO: display this onscreen somehow
+                        #for some reason the message box is crashing everything 
                         print("PAWS MUST MATCH")
                         self.in_combo_state = False
                         self.recolor(self.second_selected)
@@ -406,7 +424,6 @@ class PrintManager():
                             self.selected_print,
                             self.combo_prints.is_right[self.selected_print],
                             self.combo_prints.is_hind[self.selected_print])
-            #TODO: TEMPORARY
             elif event.key == 'm':
                 self.initiate_split_window()
 
@@ -417,6 +434,18 @@ class PrintManager():
             print('and there wasnt no selection')
             SplitPrintWindow(self, self.combo_prints, self.hulls_df,
                               self.selected_print, self.vid_panel)
+
+    def toggle_combo_state(self):
+        self.in_combo_state = not self.in_combo_state
+        if self.in_combo_state:
+            self.select_panel.display_combo_text(self.selected_print)
+        else:
+            if self.second_selected is not None:
+                self.recolor(self.second_selected)
+                self.second_selected = None
+            self.select_panel.set_selected(self.selected_print,
+                            self.combo_prints.is_right[self.selected_print],
+                            self.combo_prints.is_hind[self.selected_print])
 
     def change_print_classification(self, label):
         """when radio buttons are clicked, or the correct key is pressed,
@@ -448,17 +477,16 @@ class PrintManager():
             self.artist_dict.pop(artist, None)
             artist.remove()
         self.print_dict.pop(print_numb, None)
-        self.combo_prints.drop(print_numb)
+        self.combo_prints.drop(print_numb,inplace=True)
         self.hulls_df.loc[self.hulls_df.print_numb == print_numb, 'is_kept'] = False
         self.select_panel.clear_axes()
         self.selected_print = None
         self.vid_panel.delete_print(print_numb)
         plt.draw()
 
-    def handle_combine_graphics(self, print_numb1, print_numb2):
+    def handle_combine_graphics(self, keep, del_):
         """handles fixing up graphics after two prints are combined"""
-        keep = max(print_numb1, print_numb2)
-        del_ = min(print_numb1, print_numb2)
+
         self.print_dict[keep] = self.print_dict[keep]+self.print_dict[del_]
         for artist in self.print_dict[del_]:
             #a roundabout way of checking if its a rectangle
@@ -468,7 +496,7 @@ class PrintManager():
                 artist.remove()
             else:
                 self.artist_dict[artist] = keep
-        self.vid_panel.handle_combine_graphics(print_numb1, print_numb2)
+        self.vid_panel.handle_combine_graphics(keep, del_)
         self.print_dict.pop(del_, None)
         self.adjust_temporal(keep)
         self.recolor(keep)
@@ -615,6 +643,7 @@ class PrintManager():
             self.print_dict[print_numb] = []
 
     def save(self, event):
+        print('saving changes')
         combo_prints = self.combo_prints.astype('int')
         combo_prints.to_csv(file.replace('.mp4', ' combo df.csv'),
                             index=True, columns = ['max_area',
@@ -626,7 +655,7 @@ class PrintManager():
         write_hulls_df.astype('int').to_csv(file.replace('.mp4', ' hull.csv'),
                                             index=False)
         self.hulls_df.to_pickle(file.replace('.mp4', ' hull.p'))
-
+        print('changes saved')
 
 class VideoPanel():
     """handles the video display. Contains the video object, and then
@@ -639,7 +668,7 @@ class VideoPanel():
         self.combo_prints = combo_prints
         self.hulls_df = hulls_df
         self.video_path = file
-        with open(os.path.join(os.path.split(file)[0], 'SettingsData.txt'), 'rb') as f:
+        with open(os.path.join(os.path.split(file)[0], 'SettingsData.txt')) as f:
             settings = json.load(f)
         self.roi = settings['roi']
         self.video = PyAVReaderIndexed(self.video_path)
@@ -650,6 +679,8 @@ class VideoPanel():
         for print_numb in self.combo_prints.index.values:
             self.print_dict[print_numb] = []
         self.frame_dict = {}
+        self.min_frame = self.combo_prints.first_frame.min()
+        self.max_frame = self.combo_prints.last_frame.max()
         for frame in range(int(self.combo_prints.first_frame.min()),
                            int(self.combo_prints.last_frame.max())+1):
             self.frame_dict[frame] = []
@@ -664,9 +695,9 @@ class VideoPanel():
 
     #TODO: do inheritance
     def wipe_and_redraw_graphics(self):
-        #TODO: temp
-        self.combo_prints.to_pickle('testing split in vid panel combo.p')
-        self.hulls_df.to_pickle('testing split in vid panel hull.p')
+        #temp
+        #self.combo_prints.to_pickle('testing split in vid panel combo.p')
+        #self.hulls_df.to_pickle('testing split in vid panel hull.p')
         self.spatial_axis.clear()
         self.print_dict = {}
         for print_numb in self.combo_prints.index.values:
@@ -684,7 +715,6 @@ class VideoPanel():
         for idx, row_ in self.hulls_df[self.hulls_df.is_kept].iterrows():
             #get paw id from combo prints
             paw_id = self.combo_prints.paw_id[row_.print_numb]
-            #TODO: make these closed
             artist = self.spatial_axis.plot(row_.hull[:,0,0], row_.hull[:,0,1],
                                             c = self.colors[int(paw_id)],
                                             visible=False)
@@ -721,9 +751,8 @@ class VideoPanel():
                     artist.set_color(color)
         plt.draw()
 
-    def handle_combine_graphics(self, print_numb1, print_numb2):
-        keep = max(print_numb1, print_numb2)
-        del_ = min(print_numb1, print_numb2)
+    def handle_combine_graphics(self, keep, del_):
+        
         self.print_dict[keep] = self.print_dict[keep]+self.print_dict[del_]
 
     def delete_print(self, print_numb):
@@ -743,6 +772,12 @@ class VideoPanel():
     def change_frame(self, prev_frame, new_frame):
         #print('starting frame change')
         #s=time.time()
+        if new_frame > self.max_frame:
+            new_frame = self.max_frame
+            print('attempted to access frame number greater than ', self.max_frame)
+        elif new_frame < self.min_frame:
+            new_frame = self.min_frame
+            print('attempted to access frame number less than ', self.min_frame)
         for artist in self.frame_dict[prev_frame]:
             artist.set_visible(False)
         #print(time.time()-s)
@@ -869,5 +904,13 @@ class SplitPrintWindow():
         # acquire a lock on the widget drawing
         self.fig.canvas.widgetlock(self.lasso)
 
-file = tkFileDialog.askopenfilename(title = "choose the video file")
-FigureContainer(file)
+def pick_file():
+    root = tk.Tk()
+    root.update()
+    file = tkFileDialog.askopenfilename(title = "choose the video file")
+    root.destroy()
+    root.quit()
+    return file
+
+
+FigureContainer(pick_file())
