@@ -31,7 +31,7 @@ import matplotlib.patches as patches
 import pandas as pd
 
 from mod_pims import PyAVReaderIndexed
-from GaitAnalyzer2 import combine_prints
+from PrAnCER import combine_prints
 import json
 from matplotlib.widgets import Lasso
 from matplotlib import path

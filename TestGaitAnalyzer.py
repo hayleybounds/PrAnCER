@@ -6,7 +6,7 @@ Created on Tue Apr 24 15:02:10 2018
 """
 import unittest
 import pandas as pd
-from GaitAnalyzer2 import combine_prints, assign_print_numbers, create_combo_prints
+from PrAnCER import combine_prints, assign_print_numbers, create_combo_prints
 import numpy as np
 
 class TestCombination(unittest.TestCase):
