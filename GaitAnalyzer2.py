@@ -356,6 +356,9 @@ class RoiChooser():
     Output: roi: a list of the form [left x, top y, right x, bottom y]
     """
     def set_roi(self):
+        tkMessageBox.showinfo('Set ROI', 'Set ROI by left clicking for top border, ' +
+            'right clicking for bottom border, and then pressing n. To reset roi, ' +
+            'press z')
         roi = None
         cv2.namedWindow('Set ROI')
         cv2.setMouseCallback('Set ROI', self.mouse_click)
@@ -732,6 +735,7 @@ class video_analyzer():
             rval, frame = self.video.read()
             frame_numb += 1
             if rval == False: #break out of loop if vid is over
+                print("total frames: ", frame_numb)
                 break
 
             analyzed_frame, do_display = self._analyze_one_frame(frame, frame_numb)
@@ -953,6 +957,7 @@ def combine_prints(combo_prints, idx1, idx2, hulls_df = None):
                      'print_numb'] = combo_prints.print_numb[keep_idx]
     #and then delete the row
     combo_prints.drop(del_idx, inplace=True)
+    return keep_idx, del_idx
 
 """Iterates through all prints and for each print, gets all other prints
 that are possibly repeats -that is, are the same for front/hind and left/right
