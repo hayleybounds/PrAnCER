@@ -481,7 +481,7 @@ def make_day_file(subfolder, week, day):
     file_paths = glob.glob(subfolder + '/*' + '.csv')
 
     #get rid of csvs that don't contain 'analyzed'
-    file_paths = [path for path in file_paths if 'analyzed' in path]
+    file_paths = [path for path in file_paths if 'combo df' in path]
 
     #then get rid of ones that don't say corrected
     #file_paths = [path for path in file_paths if 'corrected' in path]
