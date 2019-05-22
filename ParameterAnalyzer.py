@@ -108,25 +108,26 @@ TODO: make it actually throw an error, remove partial prints
 def get_avg_bos(prints_df, name):
     numbPrints = hind_prints_to_analyze
     #first, delete all non back paws
-    df = prints_df[prints_df['ForB'] == 'b']
+    df = prints_df[prints_df.is_hind]
     df = df.reset_index(drop=True)
     #first make sure everything is in order
-    [print('WARNING: for ' + name + ' paws out of order') for i in range(1, numbPrints) if df.RorL[i]==df.RorL[i-1]]
+    [print('WARNING: for ' + name + ' paws out of order') for i in range(1, numbPrints) if df.is_right[i]==df.is_right[i-1]]
     #then return bos
-    return np.mean([abs(df.centroidy[i] - df.centroidy[i-1]) for i in range(1, numbPrints)])
+    return np.mean([abs(df.Y[i] - df.Y[i-1]) for i in range(1, numbPrints)])
 
 """gets the avg stride length for a trial.
 Uses absolute distance, not just x distance.
 """
 def get_avg_stride(prints_df, name):
     numbPrints = hind_prints_to_analyze
+    
     #first, delete all non back paws
-    df = prints_df[prints_df['ForB'] == 'b']
+    df = prints_df[prints_df.is_hind]
     df = df.reset_index(drop=True)
     #first make sure everything is in order
-    [print('WARNING: for ' + name + ' paws out of order') for i in range(2, numbPrints) if df.RorL[i]!=df.RorL[i-2]]
+    [print('WARNING: for ' + name + ' paws out of order') for i in range(2, numbPrints) if df.is_right[i]!=df.is_right[i-2]]
     #then return stride
-    xy = df.loc[:,['centroidx','centroidy']].values
+    xy = df.loc[:,['X','Y']].values
     return np.mean([np.linalg.norm(xy[i,:] - xy[i-2,:]) for i in range(2, numbPrints)])
 
 
@@ -135,21 +136,21 @@ def get_avg_stride(prints_df, name):
 def get_avg_step(prints_df, name):
     numbPrints = hind_prints_to_analyze
     #first, delete all non back paws
-    df = prints_df[prints_df['ForB'] == 'b']
+    df = prints_df[prints_df.is_hind]
     df = df.reset_index(drop=True)
     #first make sure everything is in order
-    [print('WARNING: for ' + name + ' paws out of order') for i in range(1, numbPrints) if df.RorL[i]==df.RorL[i-1]]
+    [print('WARNING: for ' + name + ' paws out of order') for i in range(1, numbPrints) if df.is_right[i]==df.is_right[i-1]]
     #then return stride
-    return np.mean([abs(df.centroidx[i] - df.centroidx[i-1]) for i in range(1, numbPrints)])
+    return np.mean([abs(df.X[i] - df.X[i-1]) for i in range(1, numbPrints)])
 
 
 def get_avg_frame(prints_df, name):
     numbPrints = hind_prints_to_analyze
     #first, delete all non back paws
-    df = prints_df[prints_df['ForB'] == 'b']
+    df = prints_df[prints_df.is_hind]
     df = df.reset_index(drop=True)
     #make a duration column
-    df.loc[:,'duration'] = df.lastframe-df.firstframe
+    df.loc[:,'duration'] = df.last_frame-df.first_frame
     return df.duration[0:numbPrints].mean()
 
 
@@ -158,20 +159,20 @@ def get_avg_frame(prints_df, name):
 def get_speed_by_stride(prints_df, name, which_stride):
     numbPrints = hind_prints_to_analyze
      #first, delete all non back paws
-    backs_df = prints_df[prints_df['ForB'] == 'b']
+    backs_df = prints_df[prints_df.is_hind]
     df = backs_df.reset_index(drop=True);
     #bc for now I'm getting several stride speeds
-    if len(backs_df.ForB) < (which_stride + 2):
+    if len(backs_df.is_hind) < (which_stride + 2):
         return
     
     #first make sure everything is in order
-    [print('WARNING: for ' + name + ' paws out of order') for i in range(1, numbPrints) if df.RorL[i]==df.RorL[i-1]]
+    [print('WARNING: for ' + name + ' paws out of order') for i in range(1, numbPrints) if df.is_right[i]==df.is_right[i-1]]
     
     #get the speed for only the selected stride
     i = which_stride + 1
-    xy = df.loc[:,['centroidx','centroidy']].values
+    xy = df.loc[:,['X','Y']].values
     length = np.linalg.norm(xy[i,:]-xy[i-2,:])
-    frames = df.firstframe[i] - df.firstframe[i-2]
+    frames = df.first_frame[i] - df.first_frame[i-2]
 
     return (float(length)/frames)
 
@@ -181,13 +182,16 @@ Gets the stance to swing ratio for the right and left hind paws separately
 def get_stance_swing(prints_df, RorL):
     numbPrints = hind_prints_to_analyze
     #first, delete all non back paws
-    backs_df = prints_df[prints_df['ForB'] == 'b']
-    rights_df = backs_df[backs_df['RorL'] == RorL]
+    backs_df = prints_df[prints_df.is_hind]
+    if RorL=='l':        
+        rights_df = backs_df[~backs_df.is_right]
+    else:
+        rights_df = backs_df[backs_df.is_right]
     df = rights_df.reset_index(drop=True)
     #make a duration column
-    df.loc[:,'duration'] = df.lastframe-df.firstframe
+    df.loc[:,'duration'] = df.last_frame-df.first_frame
     
-    return np.mean([df.duration[i-1]/(df.firstframe[i]-df.lastframe[i-1]) for i in range(1, numbPrints-2)])
+    return np.mean([df.duration[i-1]/(df.first_frame[i]-df.last_frame[i-1]) for i in range(1, numbPrints-2)])
                    
 """
 Gets the duty factor for right and left paws separately
@@ -195,21 +199,24 @@ Gets the duty factor for right and left paws separately
 def get_duty_factor(prints_df, RorL):
     numbPrints = hind_prints_to_analyze
     #first, delete all non back paws
-    backs_df = prints_df[prints_df['ForB'] == 'b']
-    rights_df = backs_df[backs_df['RorL'] == RorL]
+    backs_df = prints_df[prints_df.is_hind]
+    if RorL=='l':        
+        rights_df = backs_df[~backs_df.is_right]
+    else:
+        rights_df = backs_df[backs_df.is_right]
     df = rights_df.reset_index(drop=True)
     #make a duration column
-    df.loc[:,'duration'] = df.lastframe-df.firstframe
+    df.loc[:,'duration'] = df.last_frame-df.first_frame
     
-    return np.mean([df.duration[i-1]/(df.firstframe[i]-df.lastframe[i-1]+df.duration[i-1]) for i in range(1, numbPrints-2)])
+    return np.mean([df.duration[i-1]/(df.first_frame[i]-df.last_frame[i-1]+df.duration[i-1]) for i in range(1, numbPrints-2)])
 
 
 """gets average of max contact area for all back paws
 """
 def get_avg_area(prints_df):
     numbPrints = hind_prints_to_analyze
-    backs_df = prints_df[prints_df['ForB'] == 'b']
-    return np.mean(backs_df.loc[:,'maxA'].iloc[range(numbPrints)])
+    backs_df = prints_df[prints_df.is_hind]
+    return np.mean(backs_df.loc[:,'max_area'].iloc[range(numbPrints)])
 
                    
 """Finds the relative positions of pairs of ipsilateral front and hind paws.
@@ -222,26 +229,26 @@ def get_h_f_positions(prints_df, name):
     numbPrints = hind_prints_to_analyze
     abs_positions=[]
     final_matches=[]
-    fronts_df = prints_df[prints_df['ForB'] == 'f']
-    backs_df = prints_df[prints_df['ForB'] == 'b']
+    fronts_df = prints_df[~prints_df.is_hind]
+    backs_df = prints_df[prints_df.is_hind]
     backs_df = backs_df.reset_index(drop=True)
     #for numb hind prints to analyze, find the front print of the same side that's closest to it
     #and get the difference in position of it
     for i in range(0, numbPrints):
         this_bp = backs_df.loc[i,:]
-        matching_fronts = fronts_df.loc[(fronts_df.RorL==this_bp.RorL),:]
+        matching_fronts = fronts_df.loc[(fronts_df.is_right==this_bp.is_right),:]
         matches = []
-        xy = this_bp[['centroidx','centroidy']].values        
+        xy = this_bp[['X','Y']].values        
         for indx, paw in matching_fronts.iterrows():
-            dist = np.linalg.norm(xy-paw[['centroidx','centroidy']].values)
-            if dist < 200 and paw.firstframe < this_bp.firstframe:
+            dist = np.linalg.norm(xy-paw[['X','Y']].values)
+            if dist < 200 and paw.first_frame < this_bp.first_frame:
                 #then need to make sure that this bp is the closest thing to the fp that is in acceptable time range
                 min_bprint = 0
                 min_dist = 60000
-                candidate_backs = backs_df[backs_df.firstframe > paw.firstframe]
+                candidate_backs = backs_df[backs_df.first_frame > paw.first_frame]
                 for bindx, cb in candidate_backs.iterrows():
-                    dist = np.linalg.norm(cb[['centroidx','centroidy']].values-
-                                          paw[['centroidx','centroidy']].values)
+                    dist = np.linalg.norm(cb[['X','Y']].values-
+                                          paw[['X','Y']].values)
                     if dist<min_dist:
                         min_bprint = cb.print_numb
                         min_dist = dist
@@ -255,19 +262,19 @@ def get_h_f_positions(prints_df, name):
             min_dist = 60000
             for k in matches:
                 dist_to = math.sqrt((xval -
-                        fronts_df[fronts_df.print_numb==k].centroidx.iloc[0])**2 +
+                        fronts_df[fronts_df.print_numb==k].X.iloc[0])**2 +
                         (yval -
-                        fronts_df[fronts_df.print_numb==k].centroidy.iloc[0])**2)
+                        fronts_df[fronts_df.print_numb==k].Y.iloc[0])**2)
                 if dist_to<min_dist:
                     min_dist = dist_to
                     min_print = k
             matches = [min_print]
         if len(matches) == 1:
             p = matches[0]
-            abs_positions.append(math.sqrt((this_bp.centroidx -
-                        fronts_df[fronts_df.print_numb==p].centroidx.iloc[0])**2 +
-                        (this_bp.centroidy -
-                        fronts_df[fronts_df.print_numb==p].centroidy.iloc[0])**2))
+            abs_positions.append(math.sqrt((this_bp.X -
+                        fronts_df[fronts_df.print_numb==p].X.iloc[0])**2 +
+                        (this_bp.Y -
+                        fronts_df[fronts_df.print_numb==p].Y.iloc[0])**2))
 
             final_matches.append(p)
             #elif len(matches)==0:
@@ -303,7 +310,7 @@ def make_day_file(subfolder):
     file_paths = glob.glob(subfolder + '/*' + '.csv')
 
     #get rid of csvs that don't contain 'analyzed'
-    file_paths = [path for path in file_paths if 'analyzed' in path]
+    file_paths = [path for path in file_paths if 'combo df' in path]
 
     #then get rid of ones that don't say corrected
     #file_paths = [path for path in file_paths if 'corrected' in path]
@@ -311,7 +318,10 @@ def make_day_file(subfolder):
     #read everything to panda dataframes
     dfs = []
     for path in file_paths:
-        dfs.append(pd.read_csv(path))
+        df = pd.read_csv(path)
+        df.is_hind = df.is_hind.astype('bool')
+        df.is_right = df.is_right.astype('bool')
+        dfs.append(df)
 
     #a list of just the file name w/o path info
     file_names = [os.path.split(path)[1].split('.')[0] for path in file_paths]
