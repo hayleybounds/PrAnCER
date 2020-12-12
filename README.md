@@ -1,6 +1,7 @@
 # PrAnCER
 
-Python programs for automated gait tracking of rodents, gait parameter extraction, and manual correction of data.
+Automated gait tracking of rodents, gait parameter extraction, and manual curation of rodent gait 
+data.
 
 
 ## Getting Started
