@@ -190,8 +190,8 @@ def get_stance_swing(prints_df, RorL):
     df = rights_df.reset_index(drop=True)
     #make a duration column
     df.loc[:,'duration'] = df.last_frame-df.first_frame
-    
-    return np.mean([df.duration[i-1]/(df.first_frame[i]-df.last_frame[i-1]) for i in range(1, numbPrints-2)])
+    print('size of rights df', rights_df, 'setting is', RorL)
+    return np.mean([df.duration[i-1]/(df.first_frame[i]-df.last_frame[i-1]) for i in range(1, int(numbPrints/2))])
                    
 """
 Gets the duty factor for right and left paws separately
@@ -208,7 +208,7 @@ def get_duty_factor(prints_df, RorL):
     #make a duration column
     df.loc[:,'duration'] = df.last_frame-df.first_frame
     
-    return np.mean([df.duration[i-1]/(df.first_frame[i]-df.last_frame[i-1]+df.duration[i-1]) for i in range(1, numbPrints-2)])
+    return np.mean([df.duration[i-1]/(df.first_frame[i]-df.last_frame[i-1]+df.duration[i-1]) for i in range(1, int(numbPrints/2))])
 
 
 """gets average of max contact area for all back paws
@@ -261,6 +261,8 @@ def get_h_f_positions(prints_df, name):
             min_print = 0
             min_dist = 60000
             for k in matches:
+                xval = xy[0]
+                yval = xy[1]
                 dist_to = math.sqrt((xval -
                         fronts_df[fronts_df.print_numb==k].X.iloc[0])**2 +
                         (yval -
