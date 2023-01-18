@@ -645,16 +645,16 @@ class PrintManager():
     def save(self, event):
         print('saving changes')
         combo_prints = self.combo_prints.astype('int')
-        combo_prints.to_csv(file.replace('.mp4', ' combo df.csv'),
+        combo_prints.to_csv(self.orig_file.replace('.mp4', ' combo df.csv'),
                             index=True, columns = ['max_area',
                                                     'X','Y','first_frame',
                                                     'last_frame', 'is_right',
                                                     'is_hind', 'frame_max_a'])
         write_hulls_df = self.hulls_df.fillna(-1) #in order to write, make all nans -1
         write_hulls_df.drop(['contours', 'hull'], axis=1, inplace=True)
-        write_hulls_df.astype('int').to_csv(file.replace('.mp4', ' hull.csv'),
+        write_hulls_df.astype('int').to_csv(self.orig_file.replace('.mp4', ' hull.csv'),
                                             index=False)
-        self.hulls_df.to_pickle(file.replace('.mp4', ' hull.p'))
+        self.hulls_df.to_pickle(self.orig_file.replace('.mp4', ' hull.p'))
         print('changes saved')
 
 class VideoPanel():
